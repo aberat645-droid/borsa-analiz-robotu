@@ -80,17 +80,58 @@ else:
     sell_price = latest_data['Upper_Band']
     current_rsi = latest_data['RSI']
 
+    current_macd = latest_data['MACD']
+    current_macd_signal = latest_data['MACD_Signal']
+
     if len(df) > 1:
-        previous_rsi = df.iloc[-2]['RSI']
+        previous_data = df.iloc[-2]
+        previous_rsi = previous_data['RSI']
+        previous_macd = previous_data['MACD']
+        previous_macd_signal = previous_data['MACD_Signal']
     else:
         previous_rsi = current_rsi
+        previous_macd = current_macd
+        previous_macd_signal = current_macd_signal
 
     # Ekranda daha şık görünmesi için borsa uzantılarını (örn: .IS) atıp sadece hisse adını alalım
     display_symbol = ticker_symbol.split('.')[0].upper()
 
     # Özet Analiz Tablosunu Oluştur
     st.subheader(f"📊 {display_symbol} İçin Analiz Sonucu")
+
+    # Teknik Analiz Özeti
+    st.markdown("### 📋 Teknik Analiz Özeti")
+    summary_messages = []
     
+    # RSI Yorumu
+    if previous_rsi > 70 and current_rsi < previous_rsi:
+        summary_messages.append("📉 **RSI:** Hisse aşırı alım bölgesinde yoruluyor, kâr satışı gelebilir.")
+    elif previous_rsi < 30 and current_rsi > previous_rsi:
+        summary_messages.append("📈 **RSI:** Dip seviyelerden tepki alımı geliyor.")
+        
+    # MACD Yorumu
+    if current_macd > current_macd_signal and previous_macd <= previous_macd_signal:
+        summary_messages.append("🚀 **MACD:** Trend güçleniyor, alıcılar iştahlı.")
+        
+    # Bollinger Yorumu
+    if current_price >= sell_price:
+        summary_messages.append("🧱 **Bollinger:** Direnç seviyesine gelindi.")
+    elif current_price <= buy_price:
+        summary_messages.append("🛡️ **Bollinger:** Destek seviyesinden dönüş beklenebilir.")
+
+    if summary_messages:
+        for msg in summary_messages:
+            if "Dip" in msg or "güçleniyor" in msg or "Destek" in msg:
+                st.success(msg)
+            elif "yoruluyor" in msg or "Direnç" in msg:
+                st.warning(msg)
+            else:
+                st.info(msg)
+    else:
+        st.info("Sakin bir piyasa, hissede belirgin bir sinyal veya kırılım görülmüyor.")
+    
+    st.markdown("---")
+
     # Metric kartları
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Güncel Fiyat", f"{current_price:.2f}")
