@@ -121,6 +121,58 @@ def calculate_technical_indicators(df):
 
     return df
 
+def backtest_rsi_macd_strategy(df, initial_balance=10000):
+    balance = initial_balance
+    shares = 0
+    total_trades = 0
+    successful_trades = 0
+    last_buy_price = 0
+    
+    for i in range(1, len(df)):
+        price = df['Close'].iloc[i]
+        rsi = df['RSI'].iloc[i]
+        macd = df['MACD'].iloc[i]
+        macd_signal = df['MACD_Signal'].iloc[i]
+        sma_200 = df['SMA_200'].iloc[i]
+        
+        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal) or pd.isna(sma_200):
+            continue
+            
+        macd_buy_signal = macd > macd_signal
+        trend_is_up = price > sma_200
+        
+        # Sinyal Durumu: Al(1), Sat(-1), Bekle(0)
+        signal = 0
+        if trend_is_up and rsi < 40 and macd_buy_signal:
+            signal = 1
+        elif shares > 0 and (price <= last_buy_price * 0.93 or rsi > 70):
+            signal = -1
+            
+        if signal == 1 and shares == 0:
+            shares = balance / price
+            balance = 0
+            last_buy_price = price
+            total_trades += 1
+        elif signal == -1 and shares > 0:
+            balance += shares * price
+            if price > last_buy_price:
+                successful_trades += 1
+            shares = 0
+            total_trades += 1
+
+    final_value = balance + (shares * df['Close'].iloc[-1])
+    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+    
+    # Son gün sinyali
+    last_signal = "BEKLE"
+    i = -1
+    if df['Close'].iloc[i] > df['SMA_200'].iloc[i] and df['RSI'].iloc[i] < 40 and df['MACD'].iloc[i] > df['MACD_Signal'].iloc[i]:
+        last_signal = "AL"
+    elif df['RSI'].iloc[i] > 70:
+        last_signal = "SAT"
+        
+    return final_value, total_trades, win_rate, last_signal
+
 def backtest_supertrend_strategy(df, initial_balance=10000):
     balance = initial_balance
     shares = 0
@@ -131,54 +183,58 @@ def backtest_supertrend_strategy(df, initial_balance=10000):
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
         
-        # Hacim
         if isinstance(df.columns, pd.MultiIndex):
             vol = df['Volume'].iloc[i, 0]
         else:
             vol = df['Volume'].iloc[i]
             
         vol_sma_10 = df['Volume_SMA_10'].iloc[i]
-        trend_dir = df['Trend_Dir'].iloc[i] # -1: Trend Yukarı, 1: Trend Aşağı
+        trend_dir = df['Trend_Dir'].iloc[i]
         prev_trend_dir = df['Trend_Dir'].iloc[i-1]
         
-        # Göstergelerin tam hesabı için NaN kısımlarını atla
         if pd.isna(trend_dir) or pd.isna(vol_sma_10):
             continue
             
-        trend_is_up = trend_dir == -1
         trend_just_turned_up = (prev_trend_dir == 1) and (trend_dir == -1)
         trend_just_turned_down = (prev_trend_dir == -1) and (trend_dir == 1)
         volume_confirm = vol > vol_sma_10
         
-        if trend_just_turned_up and volume_confirm and shares == 0:
-            # Alım sinyali: SuperTrend Al verdi + Hacim Onayı
+        signal = 0
+        if trend_just_turned_up and volume_confirm:
+            signal = 1
+        elif trend_just_turned_down or (shares > 0 and price <= last_buy_price * 0.93):
+            signal = -1
+            
+        if signal == 1 and shares == 0:
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
-        elif shares > 0:
-            # Satış sinyali (Zarar Kes %7 veya SuperTrend Sat sinyali verdiğinde)
-            stop_loss = last_buy_price * 0.93
-            
-            if trend_just_turned_down or price <= stop_loss:
-                balance += shares * price
-                
-                # Kâr ile kapandıysa istatistiğe ekle
-                if price > last_buy_price:
-                    successful_trades += 1
-                    
-                shares = 0
-                total_trades += 1
+        elif signal == -1 and shares > 0:
+            balance += shares * price
+            if price > last_buy_price:
+                successful_trades += 1
+            shares = 0
+            total_trades += 1
 
-    # Eğer son gün hala hissede kaldıysa güncel fiyattan bozdur
     final_value = balance + (shares * df['Close'].iloc[-1])
-    
-    # Başarı oranı hesabı (toplam satış işlemlerinin kârlı olanlara oranı)
     win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
     
-    return final_value, total_trades, win_rate
+    # Son gün sinyali
+    i = -1
+    last_signal = "BEKLE"
+    trend_dir = df['Trend_Dir'].iloc[i]
+    prev_trend_dir = df['Trend_Dir'].iloc[i-1]
+    vol = df['Volume'].iloc[i, 0] if isinstance(df.columns, pd.MultiIndex) else df['Volume'].iloc[i]
+    vol_sma_10 = df['Volume_SMA_10'].iloc[i]
+    if (prev_trend_dir == 1 and trend_dir == -1) and (vol > vol_sma_10):
+        last_signal = "AL"
+    elif (prev_trend_dir == -1 and trend_dir == 1):
+        last_signal = "SAT"
+        
+    return final_value, total_trades, win_rate, last_signal
 
-def backtest_bist30_strategy(df, initial_balance=10000):
+def backtest_ma_cross_strategy(df, initial_balance=10000):
     balance = initial_balance
     shares = 0
     total_trades = 0
@@ -187,31 +243,51 @@ def backtest_bist30_strategy(df, initial_balance=10000):
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
-        rsi = df['RSI'].iloc[i]
-        sma_200 = df['SMA_200'].iloc[i]
+        sma_5 = df['SMA_5'].iloc[i]
+        sma_22 = df['SMA_22'].iloc[i]
+        prev_sma_5 = df['SMA_5'].iloc[i-1]
+        prev_sma_22 = df['SMA_22'].iloc[i-1]
         
-        if pd.isna(rsi) or pd.isna(sma_200):
+        if pd.isna(sma_5) or pd.isna(sma_22) or pd.isna(prev_sma_5):
             continue
             
-        # Çok düşmüş ama uzun vadeli ana trendi yukarı olan (BIST30 mantığı - Güvenli liman)
-        if rsi < 35 and price > sma_200 and shares == 0:
+        golden_cross = (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22)
+        death_cross = (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22)
+        
+        signal = 0
+        if golden_cross:
+            signal = 1
+        elif death_cross or (shares > 0 and price <= last_buy_price * 0.93):
+            signal = -1
+            
+        if signal == 1 and shares == 0:
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
-        elif shares > 0:
-            # Satış: %5 Stop-Loss veya %10 Kâr Al veya RSI 70 zirvesi
-            if price <= last_buy_price * 0.95 or price >= last_buy_price * 1.10 or rsi > 70:
-                balance += shares * price
-                if price > last_buy_price:
-                    successful_trades += 1
-                shares = 0
-                total_trades += 1
+        elif signal == -1 and shares > 0:
+            balance += shares * price
+            if price > last_buy_price:
+                successful_trades += 1
+            shares = 0
+            total_trades += 1
 
     final_value = balance + (shares * df['Close'].iloc[-1])
     win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
     
-    return final_value, total_trades, win_rate
+    # Son gün sinyali
+    i = -1
+    last_signal = "BEKLE"
+    sma_5 = df['SMA_5'].iloc[i]
+    sma_22 = df['SMA_22'].iloc[i]
+    prev_sma_5 = df['SMA_5'].iloc[i-1]
+    prev_sma_22 = df['SMA_22'].iloc[i-1]
+    if (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22):
+        last_signal = "AL"
+    elif (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22):
+        last_signal = "SAT"
+        
+    return final_value, total_trades, win_rate, last_signal
 
 data_load_state = st.text("Veriler çekiliyor ve analiz ediliyor...")
 data = load_data(ticker_symbol)
@@ -253,8 +329,32 @@ else:
     # Ekranda daha şık görünmesi için borsa uzantılarını (örn: .IS) atıp sadece hisse adını alalım
     display_symbol = ticker_symbol.split('.')[0].upper()
 
+    # --- OTOMATİK OPTİMİZASYON (HANGİ STRATEJİ DAHA İYİ?) ---
+    res_st = backtest_supertrend_strategy(df, 10000)
+    res_ma = backtest_ma_cross_strategy(df, 10000)
+    res_rsi = backtest_rsi_macd_strategy(df, 10000)
+    
+    strategies = {
+        "🚀 SuperTrend & Hacim": res_st,
+        "⚔️ Hareketli Ortalama Kesişimi (5/22)": res_ma,
+        "🛡️ RSI Dip Avcısı & MACD": res_rsi
+    }
+    
+    best_strategy_name = max(strategies, key=lambda k: strategies[k][0])
+    best_results = strategies[best_strategy_name]
+    best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
+    current_signal = best_results[3]
+    
+    # Şampiyon Strateji Kutusu
+    st.markdown(f"## 🏆 {display_symbol} İçin En İyi Taktik: **{best_strategy_name}**")
+    st.success(f"Bu hisseye 1 yıl önce en uygun taktikle 10.000₺ yatırsaydınız, **%{best_profit_pct:.2f} getiriyle** sermayeniz **{best_results[0]:,.2f}₺** olurdu.")
+    
+    signal_color = "red" if current_signal == "SAT" else "green" if current_signal == "AL" else "gray"
+    st.markdown(f"### 🔔 Şampiyon Stratejinin Mevcut Sinyali: <span style='color:{signal_color}'>**{current_signal}**</span>", unsafe_allow_html=True)
+    st.markdown("---")
+
     # Özet Analiz Tablosunu Oluştur
-    st.subheader(f"📊 {display_symbol} İçin Analiz Sonucu")
+    st.subheader(f"📊 {display_symbol} Güncel Fiyat Bilgileri")
 
     # Teknik Analiz Özeti
     st.markdown("### 📋 Teknik Analiz Özeti")
