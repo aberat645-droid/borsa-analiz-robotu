@@ -178,6 +178,41 @@ def backtest_supertrend_strategy(df, initial_balance=10000):
     
     return final_value, total_trades, win_rate
 
+def backtest_bist30_strategy(df, initial_balance=10000):
+    balance = initial_balance
+    shares = 0
+    total_trades = 0
+    successful_trades = 0
+    last_buy_price = 0
+    
+    for i in range(1, len(df)):
+        price = df['Close'].iloc[i]
+        rsi = df['RSI'].iloc[i]
+        sma_200 = df['SMA_200'].iloc[i]
+        
+        if pd.isna(rsi) or pd.isna(sma_200):
+            continue
+            
+        # Çok düşmüş ama uzun vadeli ana trendi yukarı olan (BIST30 mantığı - Güvenli liman)
+        if rsi < 35 and price > sma_200 and shares == 0:
+            shares = balance / price
+            balance = 0
+            last_buy_price = price
+            total_trades += 1
+        elif shares > 0:
+            # Satış: %5 Stop-Loss veya %10 Kâr Al veya RSI 70 zirvesi
+            if price <= last_buy_price * 0.95 or price >= last_buy_price * 1.10 or rsi > 70:
+                balance += shares * price
+                if price > last_buy_price:
+                    successful_trades += 1
+                shares = 0
+                total_trades += 1
+
+    final_value = balance + (shares * df['Close'].iloc[-1])
+    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+    
+    return final_value, total_trades, win_rate
+
 data_load_state = st.text("Veriler çekiliyor ve analiz ediliyor...")
 data = load_data(ticker_symbol)
 
@@ -325,10 +360,22 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 Otonom SuperTrend & Hacim Raporu (Son 1 Yıl)")
-    st.info("Bu simülasyon, **SuperTrend (10, 3) alım sinyali verirken günlük hacmin 10 günlük hacim ortalamasını aşması (Hacim Onayı)** durumunda alım yapan agresif bir stratejiyi (Bileşik Getiri Kâr katarak) test eder. Trendin tersine döndüğünü gösteren SuperTrend SAT sinyalinde veya fiyatın **-%7** stop-loss seviyesine gerilemesi halinde satar.")
+    st.markdown("### 🤖 Borsa Stratejisi Test Laboratuvarı (Son 1 Yıl)")
+    st.info("Her hissenin karakteri farklıdır. Ağır ilerleyen BIST30 hisseleri ile volatil yan tahtalar aynı stratejiye uymaz. Hissenin karakterine en uygun olan stratejiyi seçip test edin!")
     
-    final_val, trade_count, win_rate = backtest_supertrend_strategy(df, 10000)
+    strategy_choice = st.radio(
+        "📝 Test Edilecek Stratejiyi Seçin:",
+        ["1️⃣ Agresif SuperTrend (Yan Tahtalar ve Trend Hisseleri İçin)", 
+         "2️⃣ BIST30 Kasa Katlama (Güvenli: Ana Trend + RSI Dipten Toplama)"]
+    )
+    
+    if "SuperTrend" in strategy_choice:
+        final_val, trade_count, win_rate = backtest_supertrend_strategy(df, 10000)
+        st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer. %7 Stop-Loss uygular. Özellikle KBORU, GESAN gibi hızlı hisselerde (Trend Following) devasa kârlar üretirken, THYAO gibi yatay/ağır hisselerde çok fazla yanlış sinyal üretir.")
+    else:
+        final_val, trade_count, win_rate = backtest_bist30_strategy(df, 10000)
+        st.markdown("**Strateji Mantığı:** 200 Günlük paranın (dev trendin) altında **ASLA** hisse almaz. Trendi yukarı olan hissenin aşırı satıldığı (**RSI < 35**) yani dip yaptığı güvenli yerlerde mal toplar. **%10 Kâr** gördüğünde veya **RSI 70**'te tepeyi satar. THYAO, TUPRS gibi ağır BIST30 hisseleri için biçilmiş kaftandır.")
+    
     profit_loss = final_val - 10000
     profit_loss_pct = (profit_loss / 10000) * 100
 
