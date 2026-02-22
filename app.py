@@ -70,25 +70,33 @@ def backtest_rsi_strategy(df, initial_balance=10000):
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
         rsi = df['RSI'].iloc[i]
+        macd = df['MACD'].iloc[i]
+        macd_signal = df['MACD_Signal'].iloc[i]
         
-        if pd.isna(rsi):
+        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal):
             continue
             
-        if rsi < 30 and shares == 0:
-            # Alım sinyali
+        macd_buy_signal = macd > macd_signal
+        
+        if rsi < 30 and macd_buy_signal and shares == 0:
+            # Alım sinyali (Çift Onay)
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
-        elif rsi > 70 and shares > 0:
-            # Satış sinyali
-            balance = shares * price
-            shares = 0
-            total_trades += 1
+        elif shares > 0:
+            # Satış sinyali (Zarar Kes, Kâr Al veya Yüksek RSI)
+            stop_loss = last_buy_price * 0.97
+            take_profit = last_buy_price * 1.10
             
-            # Kâr durumu kontrolü
-            if price > last_buy_price:
-                successful_trades += 1
+            if price <= stop_loss or price >= take_profit or rsi > 70:
+                balance = shares * price
+                shares = 0
+                total_trades += 1
+                
+                # Kâr durumu kontrolü
+                if price > last_buy_price:
+                    successful_trades += 1
 
     # Eğer hissede kaldıysa son fiyat üzerinden değerini hesapla
     final_value = balance + (shares * df['Close'].iloc[-1])
@@ -246,8 +254,8 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 RSI Stratejisi Backtest Raporu (Son 1 Yıl)")
-    st.info("Bu test, son 1 yıl içinde **RSI < 30 (Aşırı Satım)** seviyesinde alım yapıp, **RSI > 70 (Aşırı Alım)** seviyesinde satım yapan basit bir stratejiyi simüle eder.")
+    st.markdown("### 🤖 Gelişmiş Strateji Raporu (Son 1 Yıl)")
+    st.info("Bu test, **RSI < 30** iken **MACD > Sinyal çizgisi (Yukarı Kesişim)** ile çift onaylı alım yapan; **%3 Zarar Kes (Stop-Loss)**, **%10 Kâr Al (Take-Profit)** veya **RSI > 70** senaryolarında ise anında satım yapan gelişmiş stratejiyi simüle eder.")
     
     final_val, trade_count, win_rate = backtest_rsi_strategy(df, 10000)
     profit_loss = final_val - 10000
