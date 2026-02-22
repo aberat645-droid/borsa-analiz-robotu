@@ -9,9 +9,8 @@ st.set_page_config(page_title="Canlı Borsa Analiz Aracı", page_icon="📈", la
 st.title("📈 Akıllı Borsa Analiz Aracı")
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
 
-# Sidebar ayarları
-st.sidebar.header("Analiz Ayarları")
-ticker_symbol = st.sidebar.text_input("Hisse Sembolü (Örn: THYAO.IS, AAPL, GOOG)", value="THYAO.IS")
+# Hisse Arama Kutusu
+ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, AAPL, GOOG)", value="THYAO.IS")
 
 # Period sabit (1 yıllık), analiz için en az 1 yıllık veri genelde iyidir.
 yf_period = "1y"
@@ -47,6 +46,13 @@ def calculate_technical_indicators(df):
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
+
+    # MACD (12, 26, 9) hesaplama
+    df['EMA_12'] = close_series.ewm(span=12, adjust=False).mean()
+    df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA_12'] - df['EMA_26']
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
 
     return df
 
@@ -123,5 +129,61 @@ else:
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
+    # Hacim Grafiği
+    st.markdown("### 📊 İşlem Hacmi (Volume)")
+    
+    if isinstance(data.columns, pd.MultiIndex):
+        volume_series = data['Volume'].iloc[:, 0]
+    else:
+        volume_series = data['Volume']
+
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Bar(x=df.index, y=volume_series, name='Hacim', marker_color='#1f77b4'))
+    fig_vol.update_layout(
+        xaxis_title='Zaman',
+        yaxis_title='Hacim',
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=30, b=0),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+    # MACD Grafiği
+    st.markdown("### 📉 MACD (12, 26, 9) Göstergesi")
+    fig_macd = go.Figure()
+    
+    # MACD Histogramı için renk belirleme (pozitif yeşil, negatif kırmızı)
+    colors = ['green' if val >= 0 else 'red' for val in df['MACD_Hist']]
+    
+    fig_macd.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histogram', marker_color=colors))
+    fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='blue')))
+    fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], mode='lines', name='Sinyal', line=dict(color='orange')))
+    
+    fig_macd.update_layout(
+        xaxis_title='Zaman',
+        yaxis_title='MACD',
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=30, b=0),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_macd, use_container_width=True)
+
+    # Haber Akışı
+    st.markdown("---")
+    st.markdown(f"### 📰 {display_symbol} Son Haberler")
+    try:
+        stock = yf.Ticker(ticker_symbol)
+        news = stock.news
+        if news:
+            for n in news[:5]: # Son 5 haber
+                title = n.get('title', 'Başlık Bulunamadı')
+                link = n.get('link', '#')
+                publisher = n.get('publisher', 'Bilinmeyen Kaynak')
+                st.markdown(f"- [{title}]({link}) *(Kaynak: {publisher})*")
+        else:
+            st.info("Bu hisse için güncel haber bulunamadı.")
+    except Exception as e:
+        st.error("Haberler çekilirken bir hata oluştu.")
 
     st.warning("⚠️ Sorumluluk Reddi: Bu araç tamamen teknik göstergelere (Bollinger Bantları, RSI ve Hareketli Ortalamalar) dayalı matematiksel hesaplamalar sunar ve bir yatırım tavsiyesi (YTD) niteliği taşımaz. İşlem yapmadan önce kendi araştırmanızı yapınız.")
