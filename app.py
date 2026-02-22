@@ -349,9 +349,40 @@ else:
     st.markdown(f"## 🏆 {display_symbol} İçin En İyi Taktik: **{best_strategy_name}**")
     st.success(f"Bu hisseye 1 yıl önce en uygun taktikle 10.000₺ yatırsaydınız, **%{best_profit_pct:.2f} getiriyle** sermayeniz **{best_results[0]:,.2f}₺** olurdu.")
     
-    signal_color = "red" if current_signal == "SAT" else "green" if current_signal == "AL" else "gray"
-    st.markdown(f"### 🔔 Şampiyon Stratejinin Mevcut Sinyali: <span style='color:{signal_color}'>**{current_signal}**</span>", unsafe_allow_html=True)
     st.markdown("---")
+    
+    # ------------------ TELEGRAM ENTEGRASYONU ------------------
+    st.markdown("### 📲 Akıllı Bildirimler (Telegram)")
+    st.info("Bu hisse için Şampiyon Stratejinin ürettiği güncel sinyali Telegram üzerinden cebinize gönderebilirsiniz.")
+    
+    col_tel1, col_tel2 = st.columns(2)
+    with col_tel1:
+        tg_bot_token = st.text_input("Bot Token", type="password", help="BotFather'dan aldığınız HTTP API Token")
+    with col_tel2:
+        tg_chat_id = st.text_input("Chat ID", help="Mesajın gönderileceği kişi veya grubun ID'si")
+        
+    if st.button("Sinyali Telegram'a Gönder 🚀"):
+        if not tg_bot_token or not tg_chat_id:
+            st.error("Lütfen Bot Token ve Chat ID alanlarını doldurunuz!")
+        else:
+            message = f"🤖 Borsa Analiz Robotu [{display_symbol}]\n"
+            message += f"🏆 En İyi Strateji: {best_strategy_name}\n"
+            message += f"📈 1 Yıllık Test Getirisi: %{best_profit_pct:.2f}\n"
+            message += f"🔔 Mevcut Durum: {current_signal}"
+            
+            url = f"https://api.telegram.org/bot{tg_bot_token}/sendMessage"
+            payload = {
+                "chat_id": tg_chat_id,
+                "text": message
+            }
+            try:
+                response = requests.post(url, json=payload)
+                if response.status_code == 200:
+                    st.success("Sinyal başarıyla Telegram'a gönderildi!")
+                else:
+                    st.error(f"Telegram'a gönderilirken hata oluştu. Hata Kodu: {response.status_code}")
+            except Exception as e:
+                st.error(f"Bağlantı hatası: {e}")
 
     # Özet Analiz Tablosunu Oluştur
     st.subheader(f"📊 {display_symbol} Güncel Fiyat Bilgileri")
