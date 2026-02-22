@@ -3,8 +3,24 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+import requests
 
 st.set_page_config(page_title="Canlı Borsa Analiz Aracı", page_icon="📈", layout="wide")
+
+def send_telegram_message(message):
+    try:
+        token = st.secrets.get("TELEGRAM_BOT_TOKEN", st.secrets.get("TELEGRAM_TOKEN", ""))
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+        if token and chat_id:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {"chat_id": chat_id, "text": message}
+            requests.post(url, json=payload, timeout=5)
+    except Exception:
+        pass
+
+if "bot_started" not in st.session_state:
+    st.session_state.bot_started = True
+    send_telegram_message("🤖 Borsa Robotun Göreve Hazır Ortak!")
 
 st.title("📈 Akıllı Borsa Analiz Aracı")
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
@@ -345,6 +361,14 @@ else:
     best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
     current_signal = best_results[3]
     
+    # Otomatik Telegram Sinyali Gönderimi (Session State ile spam önleme)
+    if current_signal in ["AL", "SAT"]:
+        signal_state_key = f"signal_sent_{display_symbol}"
+        if st.session_state.get(signal_state_key) != current_signal:
+            auto_msg = f"🚀 {display_symbol} Sinyali! En iyi çalışan {best_strategy_name} taktiğiyle şu an {current_signal} durumundayız. Fiyat: {float(current_price):.2f} TL"
+            send_telegram_message(auto_msg)
+            st.session_state[signal_state_key] = current_signal
+            
     # Şampiyon Strateji Kutusu
     st.markdown(f"## 🏆 {display_symbol} İçin En İyi Taktik: **{best_strategy_name}**")
     st.success(f"Bu hisseye 1 yıl önce en uygun taktikle 10.000₺ yatırsaydınız, **%{best_profit_pct:.2f} getiriyle** sermayeniz **{best_results[0]:,.2f}₺** olurdu.")
