@@ -12,7 +12,7 @@ st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz ed
 # Hisse Arama Kutusu
 col_search1, col_search2 = st.columns(2)
 with col_search1:
-    ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, AAPL, GOOG)", value="THYAO.IS")
+    ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, KBORU.IS, AAPL)", value="THYAO.IS")
 with col_search2:
     ticker_symbol_2 = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
 
@@ -56,6 +56,10 @@ def calculate_technical_indicators(df):
     df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA_12'] - df['EMA_26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    # Kesişim için Hareketli Ortalamalar (5 ve 22 Günlük)
+    df['SMA_5'] = close_series.rolling(window=5).mean()
+    df['SMA_22'] = close_series.rolling(window=22).mean()
+    
     # 20 Günlük ve Diğer Hareketli Ortalamalar
     df['SMA_50'] = close_series.rolling(window=50).mean()
     df['SMA_200'] = close_series.rolling(window=200).mean()
@@ -71,20 +75,20 @@ def backtest_golden_cross_strategy(df, initial_balance=10000):
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
-        sma_20 = df['SMA_20'].iloc[i]
-        sma_50 = df['SMA_50'].iloc[i]
-        prev_sma_20 = df['SMA_20'].iloc[i-1]
-        prev_sma_50 = df['SMA_50'].iloc[i-1]
+        sma_5 = df['SMA_5'].iloc[i]
+        sma_22 = df['SMA_22'].iloc[i]
+        prev_sma_5 = df['SMA_5'].iloc[i-1]
+        prev_sma_22 = df['SMA_22'].iloc[i-1]
         
         # Göstergelerin tam hesabı için NaN kısımlarını atla
-        if pd.isna(sma_20) or pd.isna(sma_50) or pd.isna(prev_sma_20) or pd.isna(prev_sma_50):
+        if pd.isna(sma_5) or pd.isna(sma_22) or pd.isna(prev_sma_5) or pd.isna(prev_sma_22):
             continue
             
-        golden_cross = (prev_sma_20 <= prev_sma_50) and (sma_20 > sma_50)
-        death_cross = (prev_sma_20 >= prev_sma_50) and (sma_20 < sma_50)
+        golden_cross = (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22)
+        death_cross = (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22)
         
         if golden_cross and shares == 0:
-            # Alım sinyali: Golden Cross
+            # Alım sinyali: Golden Cross (Tüm sermaye + önceki kârlar ile)
             shares = balance / price
             balance = 0
             last_buy_price = price
@@ -258,8 +262,8 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 Golden Cross Stratejisi Raporu (Son 1 Yıl)")
-    st.info("Bu simülasyon, **SMA 20'nin SMA 50'yi yukarı kesmesi** (Golden Cross) durumunda alım yapan; trendin tersine döndüğünü gösteren **SMA 20'nin SMA 50'yi aşağı kesmesi** (Death Cross) durumunda veya fiyatın stop seviyesi olan **-%7**'ye düşmesi halinde satış yapan stratejiyi analiz eder.")
+    st.markdown("### 🤖 Hızlı Golden Cross & Bileşik Getiri Raporu (Son 1 Yıl)")
+    st.info("Bu simülasyon, **SMA 5'in SMA 22'yi yukarı kesmesi** durumunda alım yapan ve **tüm kârı ana paraya ekleyerek (Bileşik Getiri - Compounding)** ilerleyen agresif bir stratejiyi test eder. Trendin tersine döndüğünü gösteren **SMA 5'in SMA 22'yi aşağı kesmesi** durumunda veya fiyatın **-%7** stop-loss seviyesine düşmesi halinde satış yapar. (THYAO veya KBORU.IS üzerinde test edebilirsiniz)")
     
     final_val, trade_count, win_rate = backtest_golden_cross_strategy(df, 10000)
     profit_loss = final_val - 10000
