@@ -66,6 +66,7 @@ def backtest_rsi_strategy(df, initial_balance=10000):
     total_trades = 0
     successful_trades = 0
     last_buy_price = 0
+    half_sold = False
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
@@ -78,32 +79,44 @@ def backtest_rsi_strategy(df, initial_balance=10000):
             
         macd_buy_signal = macd > macd_signal
         
-        if rsi < 30 and macd_buy_signal and shares == 0:
+        if rsi < 45 and macd_buy_signal and shares == 0:
             # Alım sinyali (Çift Onay)
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
+            half_sold = False
         elif shares > 0:
-            # Satış sinyali (Zarar Kes, Kâr Al veya Yüksek RSI)
-            stop_loss = last_buy_price * 0.97
-            take_profit = last_buy_price * 1.10
+            # Stop-loss ve Kâr-Al seviyeleri
+            stop_loss = last_buy_price * 0.96
+            take_profit = last_buy_price * 1.05
             
-            if price <= stop_loss or price >= take_profit or rsi > 70:
-                balance = shares * price
-                shares = 0
+            # %5 Kâr gördüğünde (eğer daha önce satılmadıysa) hisselerin yarısını sat
+            if price >= take_profit and not half_sold:
+                sold_shares = shares / 2
+                balance += sold_shares * price
+                shares -= sold_shares
+                half_sold = True
                 total_trades += 1
+                successful_trades += 1
                 
-                # Kâr durumu kontrolü
+            # Kalanı (veya kar alınamadan düşerse tamamını) Stop-Loss veya RSI > 70 ile sat
+            elif price <= stop_loss or rsi > 70:
+                balance += shares * price
+                
+                # Kâr ile kapandıysa istatistiğe ekle
                 if price > last_buy_price:
                     successful_trades += 1
+                    
+                shares = 0
+                total_trades += 1
+                half_sold = False
 
-    # Eğer hissede kaldıysa son fiyat üzerinden değerini hesapla
+    # Eğer son gün hala hissede kaldıysa güncel fiyattan bozdur
     final_value = balance + (shares * df['Close'].iloc[-1])
     
-    # Başarı oranı hesabı (sadece tamamlanmış al-sat işlemleri üzerinden)
-    completed_pairs = total_trades // 2
-    win_rate = (successful_trades / completed_pairs * 100) if completed_pairs > 0 else 0
+    # Başarı oranı hesabı (toplam satış işlemlerinin kârlı olanlara oranı)
+    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
     
     return final_value, total_trades, win_rate
 
@@ -255,7 +268,7 @@ else:
 
     # ------------------ BACKTEST SİSTEMİ ------------------
     st.markdown("### 🤖 Gelişmiş Strateji Raporu (Son 1 Yıl)")
-    st.info("Bu test, **RSI < 30** iken **MACD > Sinyal çizgisi (Yukarı Kesişim)** ile çift onaylı alım yapan; **%3 Zarar Kes (Stop-Loss)**, **%10 Kâr Al (Take-Profit)** veya **RSI > 70** senaryolarında ise anında satım yapan gelişmiş stratejiyi simüle eder.")
+    st.info("Bu test, **RSI < 45** iken **MACD > Sinyal çizgisi** ile çift onaylı alım yapan; **%5 Kârda (Take-Profit)** pozisyonun yarısını satan, **%4 Zarar Kes (Stop-Loss)** veya **RSI > 70** durumunda ise elde kalan tüm hisseleri satan esnek bir stratejiyi simüle eder.")
     
     final_val, trade_count, win_rate = backtest_rsi_strategy(df, 10000)
     profit_loss = final_val - 10000
