@@ -56,14 +56,13 @@ def calculate_technical_indicators(df):
     df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA_12'] - df['EMA_26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    # 200 Günlük Hareketli Ortalama (Trend Filtresi)
+    # 20 Günlük ve Diğer Hareketli Ortalamalar
+    df['SMA_50'] = close_series.rolling(window=50).mean()
     df['SMA_200'] = close_series.rolling(window=200).mean()
 
     return df
 
-def backtest_rsi_strategy(df, initial_balance=10000):
+def backtest_golden_cross_strategy(df, initial_balance=10000):
     balance = initial_balance
     shares = 0
     total_trades = 0
@@ -72,30 +71,29 @@ def backtest_rsi_strategy(df, initial_balance=10000):
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
-        rsi = df['RSI'].iloc[i]
-        macd = df['MACD'].iloc[i]
-        macd_signal = df['MACD_Signal'].iloc[i]
         sma_20 = df['SMA_20'].iloc[i]
-        sma_200 = df['SMA_200'].iloc[i]
+        sma_50 = df['SMA_50'].iloc[i]
+        prev_sma_20 = df['SMA_20'].iloc[i-1]
+        prev_sma_50 = df['SMA_50'].iloc[i-1]
         
         # Göstergelerin tam hesabı için NaN kısımlarını atla
-        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal) or pd.isna(sma_200) or pd.isna(sma_20):
+        if pd.isna(sma_20) or pd.isna(sma_50) or pd.isna(prev_sma_20) or pd.isna(prev_sma_50):
             continue
             
-        macd_buy_signal = macd > macd_signal
-        trend_is_up = price > sma_200
+        golden_cross = (prev_sma_20 <= prev_sma_50) and (sma_20 > sma_50)
+        death_cross = (prev_sma_20 >= prev_sma_50) and (sma_20 < sma_50)
         
-        if trend_is_up and rsi < 40 and macd_buy_signal and shares == 0:
-            # Alım sinyali: Trend Yukarı + Çift Onay
+        if golden_cross and shares == 0:
+            # Alım sinyali: Golden Cross
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
         elif shares > 0:
-            # Satış sinyali (Zarar Kes veya SMA 20 Trailing Stop)
+            # Satış sinyali (Zarar Kes veya Death Cross)
             stop_loss = last_buy_price * 0.93
             
-            if price <= stop_loss or price < sma_20:
+            if death_cross or price <= stop_loss:
                 balance += shares * price
                 
                 # Kâr ile kapandıysa istatistiğe ekle
@@ -260,10 +258,10 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 Otonom Trend Takipçisi Raporu (Son 1 Yıl)")
-    st.info("Bu simülasyon, **Trend Şartı (Fiyat > SMA 200)** varken **RSI < 40** ve **MACD Yukarı Kesişim** onaylarını aynı anda yakalayan bir alım algoritmasına; kârları maksimuma sürmek için **Fiyat < SMA 20 olmadığı sürece Trailing-Stop yapmayan** (kâr almayan) ve sert düşüşlerden kaçınmak için **%7 mutlak Stop-loss** koyan 'Trend Takipçisi' stratejisini analiz eder.")
+    st.markdown("### 🤖 Golden Cross Stratejisi Raporu (Son 1 Yıl)")
+    st.info("Bu simülasyon, **SMA 20'nin SMA 50'yi yukarı kesmesi** (Golden Cross) durumunda alım yapan; trendin tersine döndüğünü gösteren **SMA 20'nin SMA 50'yi aşağı kesmesi** (Death Cross) durumunda veya fiyatın stop seviyesi olan **-%7**'ye düşmesi halinde satış yapan stratejiyi analiz eder.")
     
-    final_val, trade_count, win_rate = backtest_rsi_strategy(df, 10000)
+    final_val, trade_count, win_rate = backtest_golden_cross_strategy(df, 10000)
     profit_loss = final_val - 10000
     profit_loss_pct = (profit_loss / 10000) * 100
 
