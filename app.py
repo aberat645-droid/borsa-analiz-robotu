@@ -10,7 +10,11 @@ st.title("📈 Akıllı Borsa Analiz Aracı")
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
 
 # Hisse Arama Kutusu
-ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, AAPL, GOOG)", value="THYAO.IS")
+col_search1, col_search2 = st.columns(2)
+with col_search1:
+    ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, AAPL, GOOG)", value="THYAO.IS")
+with col_search2:
+    ticker_symbol_2 = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
 
 # Period sabit (1 yıllık), analiz için en az 1 yıllık veri genelde iyidir.
 yf_period = "1y"
@@ -55,6 +59,45 @@ def calculate_technical_indicators(df):
     df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
 
     return df
+
+def backtest_rsi_strategy(df, initial_balance=10000):
+    balance = initial_balance
+    shares = 0
+    total_trades = 0
+    successful_trades = 0
+    last_buy_price = 0
+    
+    for i in range(1, len(df)):
+        price = df['Close'].iloc[i]
+        rsi = df['RSI'].iloc[i]
+        
+        if pd.isna(rsi):
+            continue
+            
+        if rsi < 30 and shares == 0:
+            # Alım sinyali
+            shares = balance / price
+            balance = 0
+            last_buy_price = price
+            total_trades += 1
+        elif rsi > 70 and shares > 0:
+            # Satış sinyali
+            balance = shares * price
+            shares = 0
+            total_trades += 1
+            
+            # Kâr durumu kontrolü
+            if price > last_buy_price:
+                successful_trades += 1
+
+    # Eğer hissede kaldıysa son fiyat üzerinden değerini hesapla
+    final_value = balance + (shares * df['Close'].iloc[-1])
+    
+    # Başarı oranı hesabı (sadece tamamlanmış al-sat işlemleri üzerinden)
+    completed_pairs = total_trades // 2
+    win_rate = (successful_trades / completed_pairs * 100) if completed_pairs > 0 else 0
+    
+    return final_value, total_trades, win_rate
 
 data_load_state = st.text("Veriler çekiliyor ve analiz ediliyor...")
 data = load_data(ticker_symbol)
@@ -170,6 +213,51 @@ else:
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
+    # ------------------ KIYASLAMA MODU ------------------
+    if ticker_symbol_2:
+        data2 = load_data(ticker_symbol_2)
+        if not data2.empty:
+            st.markdown(f"### ⚔️ {display_symbol} vs {ticker_symbol_2.split('.')[0].upper()} Yüzdesel Kıyaslama")
+            
+            # Formatsız dataframe çıkartalım
+            if isinstance(data2.columns, pd.MultiIndex):
+                df2_close = data2['Close'].iloc[:, 0]
+            else:
+                df2_close = data2['Close']
+                
+            # İlk günün verisini 0 kabul edip genel yüzde değişimi bulalım
+            df1_pct = ((df['Close'] / df['Close'].iloc[0]) - 1) * 100
+            df2_pct = ((df2_close / df2_close.iloc[0]) - 1) * 100
+
+            fig_comp = go.Figure()
+            fig_comp.add_trace(go.Scatter(x=df.index, y=df1_pct, mode='lines', name=f"{display_symbol} Getirisi", line=dict(color='#00ffcc', width=2)))
+            fig_comp.add_trace(go.Scatter(x=df2_pct.index, y=df2_pct, mode='lines', name=f"{ticker_symbol_2.split('.')[0].upper()} Getirisi", line=dict(color='#ff0066', width=2)))
+            
+            fig_comp.update_layout(
+                xaxis_title='Zaman',
+                yaxis_title='Getiri Yüzdesi (%)',
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=30, b=0),
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
+
+    # ------------------ BACKTEST SİSTEMİ ------------------
+    st.markdown("### 🤖 RSI Stratejisi Backtest Raporu (Son 1 Yıl)")
+    st.info("Bu test, son 1 yıl içinde **RSI < 30 (Aşırı Satım)** seviyesinde alım yapıp, **RSI > 70 (Aşırı Alım)** seviyesinde satım yapan basit bir stratejiyi simüle eder.")
+    
+    final_val, trade_count, win_rate = backtest_rsi_strategy(df, 10000)
+    profit_loss = final_val - 10000
+    profit_loss_pct = (profit_loss / 10000) * 100
+
+    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
+    col_bt1.metric("Başlangıç Bakiyesi", "10,000.00 ₺")
+    col_bt2.metric("Güncel Portföy Değeri", f"{final_val:,.2f} ₺", f"{profit_loss_pct:.2f}% Getiri", delta_color="normal" if profit_loss >= 0 else "inverse")
+    col_bt3.metric("Toplam İşlem Sayısı", f"{trade_count} Adet", "Alış veya Satış")
+    col_bt4.metric("Başarılı İşlem Oranı (Kârlı)", f"%{win_rate:.1f}", "Al-Sat Döngüsü Arasında")
 
     # Hacim Grafiği
     st.markdown("### 📊 İşlem Hacmi (Volume)")
