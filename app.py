@@ -355,11 +355,26 @@ else:
     st.markdown("### 📲 Akıllı Bildirimler (Telegram)")
     st.info("Bu hisse için Şampiyon Stratejinin ürettiği güncel sinyali Telegram üzerinden cebinize gönderebilirsiniz.")
     
-    col_tel1, col_tel2 = st.columns(2)
-    with col_tel1:
-        tg_bot_token = st.text_input("Bot Token", type="password", help="BotFather'dan aldığınız HTTP API Token")
-    with col_tel2:
-        tg_chat_id = st.text_input("Chat ID", help="Mesajın gönderileceği kişi veya grubun ID'si")
+    # Secrets'tan bilgileri çekmeyi dene
+    default_token = ""
+    default_chat_id = ""
+    try:
+        if "TELEGRAM_BOT_TOKEN" in st.secrets and "TELEGRAM_CHAT_ID" in st.secrets:
+            default_token = st.secrets["TELEGRAM_BOT_TOKEN"]
+            default_chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+            st.success("✅ Telegram bağlantısı `secrets.toml` dosyası üzerinden başarıyla kuruldu! Tek tıkla sinyal gönderebilirsiniz.")
+    except Exception:
+        pass
+        
+    if not default_token or not default_chat_id:
+        col_tel1, col_tel2 = st.columns(2)
+        with col_tel1:
+            tg_bot_token = st.text_input("Bot Token", type="password", help="BotFather'dan aldığınız HTTP API Token")
+        with col_tel2:
+            tg_chat_id = st.text_input("Chat ID", help="Mesajın gönderileceği kişi veya grubun ID'si")
+    else:
+        tg_bot_token = default_token
+        tg_chat_id = default_chat_id
         
     if st.button("Sinyali Telegram'a Gönder 🚀"):
         if not tg_bot_token or not tg_chat_id:
