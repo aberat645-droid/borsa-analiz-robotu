@@ -12,7 +12,7 @@ st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz ed
 # Hisse Arama Kutusu
 col_search1, col_search2 = st.columns(2)
 with col_search1:
-    ticker_symbol = st.text_input("Hisse Sembolü (Örn: THYAO.IS, KBORU.IS, AAPL)", value="THYAO.IS")
+    ticker_symbol = st.text_input("Hisse Sembolü (Örn: KBORU.IS, GESAN.IS, THYAO.IS)", value="KBORU.IS")
 with col_search2:
     ticker_symbol_2 = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
 
@@ -56,17 +56,72 @@ def calculate_technical_indicators(df):
     df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA_12'] - df['EMA_26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    
     # Kesişim için Hareketli Ortalamalar (5 ve 22 Günlük)
     df['SMA_5'] = close_series.rolling(window=5).mean()
     df['SMA_22'] = close_series.rolling(window=22).mean()
     
+    # SuperTrend (10, 3) ve Hacim Ortalaması (10 Günlük)
+    # Hacmi güvenle alalım
+    if isinstance(df.columns, pd.MultiIndex):
+        volume_series = df['Volume'].iloc[:, 0]
+    else:
+        volume_series = df['Volume']
+        
+    df['Volume_SMA_10'] = volume_series.rolling(window=10).mean()
+    
+    # ATR Hesaplama
+    high = df['High'].iloc[:, 0] if isinstance(df.columns, pd.MultiIndex) else df['High']
+    low = df['Low'].iloc[:, 0] if isinstance(df.columns, pd.MultiIndex) else df['Low']
+    
+    tr1 = high - low
+    tr2 = (high - close_series.shift(1)).abs()
+    tr3 = (low - close_series.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(window=10).mean()
+    
+    # SuperTrend Bantları (Multiplier: 3)
+    hl2 = (high + low) / 2
+    df['Basic_Upper_Band'] = hl2 + (3 * df['ATR'])
+    df['Basic_Lower_Band'] = hl2 - (3 * df['ATR'])
+    
+    # SuperTrend sinyal çizgisi hesaplaması Pandas ile iterate edilmelidir
+    # Basitlik açısından tam döngü yerine yaklaşık bir SuperTrend sütunu simülesi:
+    supertrend = pd.Series(index=df.index, dtype=float)
+    direction = pd.Series(index=df.index, dtype=int)
+    
+    for i in range(1, len(df)):
+        if i == 1:
+            supertrend.iloc[i] = df['Basic_Upper_Band'].iloc[i]
+            direction.iloc[i] = 1
+            continue
+            
+        if direction.iloc[i-1] == 1: # Trend Down
+            if close_series.iloc[i] > supertrend.iloc[i-1]:
+                direction.iloc[i] = -1 # Trend Up'a döndü
+                supertrend.iloc[i] = df['Basic_Lower_Band'].iloc[i]
+            else:
+                supertrend.iloc[i] = min(df['Basic_Upper_Band'].iloc[i], supertrend.iloc[i-1])
+                direction.iloc[i] = 1
+        else: # Trend Up (-1)
+            if close_series.iloc[i] < supertrend.iloc[i-1]:
+                direction.iloc[i] = 1 # Trend Down'a döndü
+                supertrend.iloc[i] = df['Basic_Upper_Band'].iloc[i]
+            else:
+                supertrend.iloc[i] = max(df['Basic_Lower_Band'].iloc[i], supertrend.iloc[i-1])
+                direction.iloc[i] = -1
+                
+    # Direction: -1 ise Boğa (Trend Yukarı), 1 ise Ayı (Trend Aşağı)
+    df['SuperTrend'] = supertrend
+    df['Trend_Dir'] = direction
+
     # 20 Günlük ve Diğer Hareketli Ortalamalar
     df['SMA_50'] = close_series.rolling(window=50).mean()
     df['SMA_200'] = close_series.rolling(window=200).mean()
 
     return df
 
-def backtest_golden_cross_strategy(df, initial_balance=10000):
+def backtest_supertrend_strategy(df, initial_balance=10000):
     balance = initial_balance
     shares = 0
     total_trades = 0
@@ -75,29 +130,37 @@ def backtest_golden_cross_strategy(df, initial_balance=10000):
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
-        sma_5 = df['SMA_5'].iloc[i]
-        sma_22 = df['SMA_22'].iloc[i]
-        prev_sma_5 = df['SMA_5'].iloc[i-1]
-        prev_sma_22 = df['SMA_22'].iloc[i-1]
+        
+        # Hacim
+        if isinstance(df.columns, pd.MultiIndex):
+            vol = df['Volume'].iloc[i, 0]
+        else:
+            vol = df['Volume'].iloc[i]
+            
+        vol_sma_10 = df['Volume_SMA_10'].iloc[i]
+        trend_dir = df['Trend_Dir'].iloc[i] # -1: Trend Yukarı, 1: Trend Aşağı
+        prev_trend_dir = df['Trend_Dir'].iloc[i-1]
         
         # Göstergelerin tam hesabı için NaN kısımlarını atla
-        if pd.isna(sma_5) or pd.isna(sma_22) or pd.isna(prev_sma_5) or pd.isna(prev_sma_22):
+        if pd.isna(trend_dir) or pd.isna(vol_sma_10):
             continue
             
-        golden_cross = (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22)
-        death_cross = (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22)
+        trend_is_up = trend_dir == -1
+        trend_just_turned_up = (prev_trend_dir == 1) and (trend_dir == -1)
+        trend_just_turned_down = (prev_trend_dir == -1) and (trend_dir == 1)
+        volume_confirm = vol > vol_sma_10
         
-        if golden_cross and shares == 0:
-            # Alım sinyali: Golden Cross (Tüm sermaye + önceki kârlar ile)
+        if trend_just_turned_up and volume_confirm and shares == 0:
+            # Alım sinyali: SuperTrend Al verdi + Hacim Onayı
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
         elif shares > 0:
-            # Satış sinyali (Zarar Kes veya Death Cross)
+            # Satış sinyali (Zarar Kes %7 veya SuperTrend Sat sinyali verdiğinde)
             stop_loss = last_buy_price * 0.93
             
-            if death_cross or price <= stop_loss:
+            if trend_just_turned_down or price <= stop_loss:
                 balance += shares * price
                 
                 # Kâr ile kapandıysa istatistiğe ekle
@@ -262,10 +325,10 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 Hızlı Golden Cross & Bileşik Getiri Raporu (Son 1 Yıl)")
-    st.info("Bu simülasyon, **SMA 5'in SMA 22'yi yukarı kesmesi** durumunda alım yapan ve **tüm kârı ana paraya ekleyerek (Bileşik Getiri - Compounding)** ilerleyen agresif bir stratejiyi test eder. Trendin tersine döndüğünü gösteren **SMA 5'in SMA 22'yi aşağı kesmesi** durumunda veya fiyatın **-%7** stop-loss seviyesine düşmesi halinde satış yapar. (THYAO veya KBORU.IS üzerinde test edebilirsiniz)")
+    st.markdown("### 🤖 Otonom SuperTrend & Hacim Raporu (Son 1 Yıl)")
+    st.info("Bu simülasyon, **SuperTrend (10, 3) alım sinyali verirken günlük hacmin 10 günlük hacim ortalamasını aşması (Hacim Onayı)** durumunda alım yapan agresif bir stratejiyi (Bileşik Getiri Kâr katarak) test eder. Trendin tersine döndüğünü gösteren SuperTrend SAT sinyalinde veya fiyatın **-%7** stop-loss seviyesine gerilemesi halinde satar.")
     
-    final_val, trade_count, win_rate = backtest_golden_cross_strategy(df, 10000)
+    final_val, trade_count, win_rate = backtest_supertrend_strategy(df, 10000)
     profit_loss = final_val - 10000
     profit_loss_pct = (profit_loss / 10000) * 100
 
