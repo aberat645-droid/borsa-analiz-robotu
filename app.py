@@ -57,6 +57,9 @@ def calculate_technical_indicators(df):
     df['MACD'] = df['EMA_12'] - df['EMA_26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    
+    # 200 Günlük Hareketli Ortalama (Trend Filtresi)
+    df['SMA_200'] = close_series.rolling(window=200).mean()
 
     return df
 
@@ -66,42 +69,33 @@ def backtest_rsi_strategy(df, initial_balance=10000):
     total_trades = 0
     successful_trades = 0
     last_buy_price = 0
-    half_sold = False
     
     for i in range(1, len(df)):
         price = df['Close'].iloc[i]
         rsi = df['RSI'].iloc[i]
         macd = df['MACD'].iloc[i]
         macd_signal = df['MACD_Signal'].iloc[i]
+        sma_20 = df['SMA_20'].iloc[i]
+        sma_200 = df['SMA_200'].iloc[i]
         
-        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal):
+        # Göstergelerin tam hesabı için NaN kısımlarını atla
+        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal) or pd.isna(sma_200) or pd.isna(sma_20):
             continue
             
         macd_buy_signal = macd > macd_signal
+        trend_is_up = price > sma_200
         
-        if rsi < 45 and macd_buy_signal and shares == 0:
-            # Alım sinyali (Çift Onay)
+        if trend_is_up and rsi < 40 and macd_buy_signal and shares == 0:
+            # Alım sinyali: Trend Yukarı + Çift Onay
             shares = balance / price
             balance = 0
             last_buy_price = price
             total_trades += 1
-            half_sold = False
         elif shares > 0:
-            # Stop-loss ve Kâr-Al seviyeleri
-            stop_loss = last_buy_price * 0.96
-            take_profit = last_buy_price * 1.05
+            # Satış sinyali (Zarar Kes veya SMA 20 Trailing Stop)
+            stop_loss = last_buy_price * 0.93
             
-            # %5 Kâr gördüğünde (eğer daha önce satılmadıysa) hisselerin yarısını sat
-            if price >= take_profit and not half_sold:
-                sold_shares = shares / 2
-                balance += sold_shares * price
-                shares -= sold_shares
-                half_sold = True
-                total_trades += 1
-                successful_trades += 1
-                
-            # Kalanı (veya kar alınamadan düşerse tamamını) Stop-Loss veya RSI > 70 ile sat
-            elif price <= stop_loss or rsi > 70:
+            if price <= stop_loss or price < sma_20:
                 balance += shares * price
                 
                 # Kâr ile kapandıysa istatistiğe ekle
@@ -110,7 +104,6 @@ def backtest_rsi_strategy(df, initial_balance=10000):
                     
                 shares = 0
                 total_trades += 1
-                half_sold = False
 
     # Eğer son gün hala hissede kaldıysa güncel fiyattan bozdur
     final_value = balance + (shares * df['Close'].iloc[-1])
@@ -267,8 +260,8 @@ else:
             st.warning(f"'{ticker_symbol_2}' sembolü için veri alınamadı, kıyaslama yapılamıyor.")
 
     # ------------------ BACKTEST SİSTEMİ ------------------
-    st.markdown("### 🤖 Gelişmiş Strateji Raporu (Son 1 Yıl)")
-    st.info("Bu test, **RSI < 45** iken **MACD > Sinyal çizgisi** ile çift onaylı alım yapan; **%5 Kârda (Take-Profit)** pozisyonun yarısını satan, **%4 Zarar Kes (Stop-Loss)** veya **RSI > 70** durumunda ise elde kalan tüm hisseleri satan esnek bir stratejiyi simüle eder.")
+    st.markdown("### 🤖 Otonom Trend Takipçisi Raporu (Son 1 Yıl)")
+    st.info("Bu simülasyon, **Trend Şartı (Fiyat > SMA 200)** varken **RSI < 40** ve **MACD Yukarı Kesişim** onaylarını aynı anda yakalayan bir alım algoritmasına; kârları maksimuma sürmek için **Fiyat < SMA 20 olmadığı sürece Trailing-Stop yapmayan** (kâr almayan) ve sert düşüşlerden kaçınmak için **%7 mutlak Stop-loss** koyan 'Trend Takipçisi' stratejisini analiz eder.")
     
     final_val, trade_count, win_rate = backtest_rsi_strategy(df, 10000)
     profit_loss = final_val - 10000
