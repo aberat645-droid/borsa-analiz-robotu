@@ -23,6 +23,12 @@ if "bot_started" not in st.session_state:
     send_telegram_message("🤖 Borsa Robotun Göreve Hazır Ortak!")
 
 st.title("📈 Akıllı Borsa Analiz Aracı")
+
+# Telegram Test Butonu
+if st.button("📲 Telegram Bağlantısını Test Et"):
+    send_telegram_message("Sistem Aktif Ortak!")
+    st.success("Test mesajı gönderildi! Lütfen Telegram'ı kontrol edin.")
+
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
 
 # Hisse Arama Kutusu
@@ -531,23 +537,31 @@ else:
 
     # ------------------ BACKTEST SİSTEMİ ------------------
     st.markdown("### 🤖 Borsa Stratejisi Test Laboratuvarı (Son 1 Yıl)")
-    st.info("Her hissenin karakteri farklıdır. Ağır ilerleyen BIST30 hisseleri ile volatil yan tahtalar aynı stratejiye uymaz. Hissenin karakterine en uygun olan stratejiyi seçip test edin!")
+    st.info("Her hissenin karakteri farklıdır. Ağır ilerleyen hisseler ile volatil yan tahtalar aynı stratejiye uymaz. Hissenin karakterine en uygun olan strateji sistem tarafından otomatik seçildi!")
+    
+    # Tüm strateji adlarının listesi
+    strategy_names = list(strategies.keys())
+    best_index = strategy_names.index(best_strategy_name)
     
     strategy_choice = st.radio(
-        "📝 Test Edilecek Stratejiyi Seçin:",
-        ["1️⃣ Agresif SuperTrend (Yan Tahtalar ve Trend Hisseleri İçin)", 
-         "2️⃣ BIST30 Kasa Katlama (Güvenli: Ana Trend + RSI Dipten Toplama)"]
+        "📝 Strateji Seçimi (Otomatik olarak en iyisi seçili gelir):",
+        strategy_names,
+        index=best_index
     )
     
+    # Seçilen stratejinin sonuçlarını dictionery'den çek (4 değer döner)
+    final_val, trade_count, win_rate, _ = strategies[strategy_choice]
+    
     if "SuperTrend" in strategy_choice:
-        final_val, trade_count, win_rate = backtest_supertrend_strategy(df, 10000)
-        st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer. %7 Stop-Loss uygular. Özellikle KBORU, GESAN gibi hızlı hisselerde (Trend Following) devasa kârlar üretirken, THYAO gibi yatay/ağır hisselerde çok fazla yanlış sinyal üretir.")
+        st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer. %7 Stop-Loss uygular. Özellikle KBORU, GESAN gibi hızlı hisselerde devasa kârlar üretir.")
+    elif "Hareketli" in strategy_choice:
+        st.markdown("**Strateji Mantığı:** 5 günlük ve 22 günlük Hareketli Ortalamaların kesişimini (Golden Cross / Death Cross) takip eder.")
     else:
-        final_val, trade_count, win_rate = backtest_bist30_strategy(df, 10000)
-        st.markdown("**Strateji Mantığı:** 200 Günlük paranın (dev trendin) altında **ASLA** hisse almaz. Trendi yukarı olan hissenin aşırı satıldığı (**RSI < 35**) yani dip yaptığı güvenli yerlerde mal toplar. **%10 Kâr** gördüğünde veya **RSI 70**'te tepeyi satar. THYAO, TUPRS gibi ağır BIST30 hisseleri için biçilmiş kaftandır.")
+        st.markdown("**Strateji Mantığı:** 200 Günlük EMA'nın üzerinde, Trendi yukarı olan hissenin aşırı satıldığı (**RSI < 40**) ve MACD'nin al verdiği güvenli yerlerde mal toplar.")
     
     profit_loss = final_val - 10000
     profit_loss_pct = (profit_loss / 10000) * 100
+
 
     col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
     col_bt1.metric("Başlangıç Bakiyesi", "10,000.00 ₺")
