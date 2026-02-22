@@ -14,9 +14,13 @@ def send_telegram_message(message):
         if token and chat_id:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {"chat_id": chat_id, "text": message}
-            requests.post(url, json=payload, timeout=5)
-    except Exception:
-        pass
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code != 200:
+                st.error(f"Telegram API Hatası: {response.text}")
+        else:
+            st.warning("Telegram Bot Token veya Chat ID bulunamadı. Lütfen secrets.toml dosyasını kontrol edin.")
+    except Exception as e:
+        st.error(f"Telegram Bağlantı Hatası: {e}")
 
 if "bot_started" not in st.session_state:
     st.session_state.bot_started = True
