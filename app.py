@@ -200,6 +200,9 @@ def backtest_rsi_macd_strategy(df, initial_balance=10000):
     return final_value, total_trades, win_rate, last_signal
 
 def backtest_supertrend_strategy(df, initial_balance=10000):
+    if df.empty or len(df) < 2:
+        return initial_balance, 0, 0.0, "BEKLE"
+        
     balance = initial_balance
     shares = 0
     total_trades = 0
@@ -261,6 +264,9 @@ def backtest_supertrend_strategy(df, initial_balance=10000):
     return final_value, total_trades, win_rate, last_signal
 
 def backtest_ma_cross_strategy(df, initial_balance=10000):
+    if df.empty or len(df) < 2:
+        return initial_balance, 0, 0.0, "BEKLE"
+        
     balance = initial_balance
     shares = 0
     total_trades = 0
@@ -594,10 +600,26 @@ else:
 
     # MACD Grafiği
     st.markdown("### 📉 MACD (12, 26, 9) Göstergesi")
-    fig_macd = go.Figure()
-    
-    # MACD Histogramı için renk belirleme (pozitif yeşil, negatif kırmızı)
-    colors = ['green' if val >= 0 else 'red' for val in df['MACD_Hist']]
+    if 'MACD' in df.columns and 'MACD_Hist' in df.columns and 'MACD_Signal' in df.columns:
+        fig_macd = go.Figure()
+        
+        # MACD Histogramı için renk belirleme (pozitif yeşil, negatif kırmızı)
+        colors = ['green' if val >= 0 else 'red' for val in df['MACD_Hist']]
+        
+        fig_macd.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histogram', marker_color=colors))
+        fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='blue')))
+        fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], mode='lines', name='Sinyal', line=dict(color='orange')))
+        
+        fig_macd.update_layout(
+            xaxis_title='Zaman',
+            yaxis_title='MACD',
+            template="plotly_dark",
+            margin=dict(l=0, r=0, t=30, b=0),
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_macd, use_container_width=True)
+    else:
+        st.info("Bu hisse için yeterli MACD verisi hesaplanamadı.")
     
     fig_macd.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histogram', marker_color=colors))
     fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='blue')))
