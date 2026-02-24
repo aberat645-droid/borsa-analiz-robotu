@@ -35,12 +35,28 @@ if st.button("📲 Telegram Bağlantısını Test Et"):
 
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
 
+# Borsa Seçimi
+market_choice = st.radio("🌍 Borsa Seçimi:", ["Türkiye (BIST)", "Amerika (NASDAQ/NYSE)"], horizontal=True)
+
 # Hisse Arama Kutusu
 col_search1, col_search2 = st.columns(2)
 with col_search1:
-    ticker_symbol = st.text_input("Hisse Sembolü (Örn: KBORU.IS, GESAN.IS, THYAO.IS)", value="KBORU.IS")
+    if market_choice == "Türkiye (BIST)":
+        ticker_input = st.text_input("Hisse Sembolü (Örn: KBORU, GESAN, THYAO)", value="KBORU")
+        ticker_symbol = f"{ticker_input.upper()}.IS" if not ticker_input.upper().endswith(".IS") else ticker_input.upper()
+    else:
+        ticker_input = st.text_input("Hisse Sembolü (Örn: NVDA, TSLA, AAPL)", value="NVDA")
+        ticker_symbol = ticker_input.upper()
+        
 with col_search2:
-    ticker_symbol_2 = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
+    ticker_symbol_2_input = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
+    if ticker_symbol_2_input:
+        if market_choice == "Türkiye (BIST)" and not ticker_symbol_2_input.upper().endswith(".IS"):
+            ticker_symbol_2 = f"{ticker_symbol_2_input.upper()}.IS"
+        else:
+            ticker_symbol_2 = ticker_symbol_2_input.upper()
+    else:
+        ticker_symbol_2 = ""
 
 # Period sabit (1 yıllık), analiz için en az 1 yıllık veri genelde iyidir.
 yf_period = "1y"
@@ -82,6 +98,7 @@ def calculate_technical_indicators(df):
     df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA_12'] - df['EMA_26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
     
     # Kesişim için Hareketli Ortalamalar (5 ve 22 Günlük)
     df['SMA_5'] = close_series.rolling(window=5).mean()
@@ -188,20 +205,12 @@ def backtest_rsi_macd_strategy(df, initial_balance=10000):
 
     final_value = balance + (shares * df['Close'].iloc[-1])
     win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-    
-    # Son gün sinyali
-    last_signal = "BEKLE"
-    i = -1
-    if df['Close'].iloc[i] > df['SMA_200'].iloc[i] and df['RSI'].iloc[i] < 40 and df['MACD'].iloc[i] > df['MACD_Signal'].iloc[i]:
-        last_signal = "AL"
-    elif df['RSI'].iloc[i] > 70:
-        last_signal = "SAT"
         
-    return final_value, total_trades, win_rate, last_signal
+    return final_value, total_trades, win_rate
 
 def backtest_supertrend_strategy(df, initial_balance=10000):
     if df.empty or len(df) < 2:
-        return initial_balance, 0, 0.0, "BEKLE"
+        return initial_balance, 0, 0.0
         
     balance = initial_balance
     shares = 0
@@ -248,24 +257,12 @@ def backtest_supertrend_strategy(df, initial_balance=10000):
 
     final_value = balance + (shares * df['Close'].iloc[-1])
     win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-    
-    # Son gün sinyali
-    i = -1
-    last_signal = "BEKLE"
-    trend_dir = df['Trend_Dir'].iloc[i]
-    prev_trend_dir = df['Trend_Dir'].iloc[i-1]
-    vol = df['Volume'].iloc[i, 0] if isinstance(df.columns, pd.MultiIndex) else df['Volume'].iloc[i]
-    vol_sma_10 = df['Volume_SMA_10'].iloc[i]
-    if (prev_trend_dir == 1 and trend_dir == -1) and (vol > vol_sma_10):
-        last_signal = "AL"
-    elif (prev_trend_dir == -1 and trend_dir == 1):
-        last_signal = "SAT"
         
-    return final_value, total_trades, win_rate, last_signal
+    return final_value, total_trades, win_rate
 
 def backtest_ma_cross_strategy(df, initial_balance=10000):
     if df.empty or len(df) < 2:
-        return initial_balance, 0, 0.0, "BEKLE"
+        return initial_balance, 0, 0.0
         
     balance = initial_balance
     shares = 0
@@ -306,20 +303,33 @@ def backtest_ma_cross_strategy(df, initial_balance=10000):
 
     final_value = balance + (shares * df['Close'].iloc[-1])
     win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-    
-    # Son gün sinyali
-    i = -1
-    last_signal = "BEKLE"
-    sma_5 = df['SMA_5'].iloc[i]
-    sma_22 = df['SMA_22'].iloc[i]
-    prev_sma_5 = df['SMA_5'].iloc[i-1]
-    prev_sma_22 = df['SMA_22'].iloc[i-1]
-    if (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22):
-        last_signal = "AL"
-    elif (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22):
-        last_signal = "SAT"
         
-    return final_value, total_trades, win_rate, last_signal
+    return final_value, total_trades, win_rate
+
+def get_current_signals(df):
+    if df.empty or len(df) < 2:
+        return {"🚀 SuperTrend & Hacim": "BEKLE", "⚔️ Hareketli Ortalama Kesişimi (5/22)": "BEKLE", "🛡️ RSI Dip Avcısı & MACD": "BEKLE"}
+        
+    i = -1
+    # ST
+    trend_dir = df['Trend_Dir'].iloc[i]
+    prev_trend_dir = df['Trend_Dir'].iloc[i-1]
+    vol = df['Volume'].iloc[i, 0] if isinstance(df.columns, pd.MultiIndex) else df['Volume'].iloc[i]
+    vol_sma_10 = df['Volume_SMA_10'].iloc[i]
+    st_sig = "AL" if (prev_trend_dir == 1 and trend_dir == -1 and vol > vol_sma_10) else ("SAT" if prev_trend_dir == -1 and trend_dir == 1 else "BEKLE")
+    # MA
+    sma_5, sma_22, prev_sma_5, prev_sma_22 = df['SMA_5'].iloc[i], df['SMA_22'].iloc[i], df['SMA_5'].iloc[i-1], df['SMA_22'].iloc[i-1]
+    ma_sig = "AL" if (prev_sma_5 <= prev_sma_22 and sma_5 > sma_22) else ("SAT" if prev_sma_5 >= prev_sma_22 and sma_5 < sma_22 else "BEKLE")
+    # RSI
+    rsi, macd, macd_sig, sma_200 = df['RSI'].iloc[i], df['MACD'].iloc[i], df['MACD_Signal'].iloc[i], df['SMA_200'].iloc[i]
+    price = df['Close'].iloc[i]
+    rsi_sig = "AL" if (price > sma_200 and rsi < 40 and macd > macd_sig) else ("SAT" if rsi > 70 else "BEKLE")
+    
+    return {
+        "🚀 SuperTrend & Hacim": st_sig,
+        "⚔️ Hareketli Ortalama Kesişimi (5/22)": ma_sig,
+        "🛡️ RSI Dip Avcısı & MACD": rsi_sig
+    }
 
 data_load_state = st.text("Veriler çekiliyor ve analiz ediliyor...")
 data = load_data(ticker_symbol)
@@ -372,10 +382,12 @@ else:
         "🛡️ RSI Dip Avcısı & MACD": res_rsi
     }
     
+    signals = get_current_signals(df)
+    
     best_strategy_name = max(strategies, key=lambda k: strategies[k][0])
     best_results = strategies[best_strategy_name]
     best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
-    current_signal = best_results[3]
+    current_signal = signals.get(best_strategy_name, "BEKLE")
     
     # Otomatik Telegram Sinyali Gönderimi (Session State ile spam önleme)
     if current_signal in ["AL", "SAT"]:
@@ -559,8 +571,8 @@ else:
         index=best_index
     )
     
-    # Seçilen stratejinin sonuçlarını dictionery'den çek (4 değer döner)
-    final_val, trade_count, win_rate, _ = strategies[strategy_choice]
+    # Seçilen stratejinin sonuçlarını dictionery'den çek (3 değer döner)
+    final_val, trade_count, win_rate = strategies[strategy_choice]
     
     if "SuperTrend" in strategy_choice:
         st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer. %7 Stop-Loss uygular. Özellikle KBORU, GESAN gibi hızlı hisselerde devasa kârlar üretir.")
