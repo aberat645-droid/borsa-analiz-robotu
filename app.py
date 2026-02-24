@@ -16,11 +16,11 @@ def send_telegram_message(message):
             payload = {"chat_id": chat_id, "text": message}
             response = requests.post(url, json=payload, timeout=5)
             if response.status_code != 200:
-                st.error(f"Telegram API Hatası: {response.text}")
+                st.warning(f"Telegram API Hatası: {response.text}")
         else:
             st.warning("Telegram Bot Token veya Chat ID bulunamadı. Lütfen secrets.toml dosyasını kontrol edin.")
     except Exception as e:
-        st.error(f"Telegram Bağlantı Hatası: {e}")
+        st.warning(f"Telegram Bağlantı Hatası: {e}")
 
 if "bot_started" not in st.session_state:
     st.session_state.bot_started = True
@@ -42,14 +42,14 @@ market_choice = st.radio("🌍 Borsa Seçimi:", ["Türkiye (BIST)", "Amerika (NA
 col_search1, col_search2 = st.columns(2)
 with col_search1:
     if market_choice == "Türkiye (BIST)":
-        ticker_input = st.text_input("Hisse Sembolü (Örn: KBORU, GESAN, THYAO)", value="KBORU")
+        ticker_input = st.text_input("Hisse Sembolü (Örn: KBORU, GESAN, THYAO)", value="KBORU").replace('"', '').replace("'", "").strip()
         ticker_symbol = f"{ticker_input.upper()}.IS" if not ticker_input.upper().endswith(".IS") else ticker_input.upper()
     else:
-        ticker_input = st.text_input("Hisse Sembolü (Örn: NVDA, TSLA, AAPL)", value="NVDA")
+        ticker_input = st.text_input("Hisse Sembolü (Örn: NVDA, TSLA, AAPL)", value="NVDA").replace('"', '').replace("'", "").strip()
         ticker_symbol = ticker_input.upper()
         
 with col_search2:
-    ticker_symbol_2_input = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="")
+    ticker_symbol_2_input = st.text_input("Kıyaslanacak İkinci Hisse (Opsiyonel)", value="").replace('"', '').replace("'", "").strip()
     if ticker_symbol_2_input:
         if market_choice == "Türkiye (BIST)" and not ticker_symbol_2_input.upper().endswith(".IS"):
             ticker_symbol_2 = f"{ticker_symbol_2_input.upper()}.IS"
@@ -447,9 +447,9 @@ else:
                 if response.status_code == 200:
                     st.success("Sinyal başarıyla Telegram'a gönderildi!")
                 else:
-                    st.error(f"Telegram'a gönderilirken hata oluştu. Hata Kodu: {response.status_code}")
+                    st.warning(f"Telegram'a gönderilirken hata oluştu. Hata Kodu: {response.status_code}")
             except Exception as e:
-                st.error(f"Bağlantı hatası: {e}")
+                st.warning(f"Bağlantı hatası: {e}")
 
     # Özet Analiz Tablosunu Oluştur
     st.subheader(f"📊 {display_symbol} Güncel Fiyat Bilgileri")
