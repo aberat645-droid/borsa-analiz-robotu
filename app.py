@@ -47,302 +47,233 @@ def load_data(ticker):
         return pd.DataFrame()
 
 def calculate_technical_indicators(df):
-    """
-    20 günlük Basit Hareketli Ortalama (SMA) ve Bollinger Bantları
-    kullanarak alım ve satım seviyeleri oluşturur.
-    """
-    # yfinance multi-index column döndürebiliyor, Close sütununu güvenle alalım
-    if isinstance(df.columns, pd.MultiIndex):
-        close_series = df['Close'].iloc[:, 0]
-    else:
-        close_series = df['Close']
-        
-    df['SMA_20'] = close_series.rolling(window=20).mean()
-    df['StdDev'] = close_series.rolling(window=20).std()
-    df['Upper_Band'] = df['SMA_20'] + (df['StdDev'] * 2)
-    df['Lower_Band'] = df['SMA_20'] - (df['StdDev'] * 2)
-    
-    # RSI (Relative Strength Index) hesaplama
-    delta = close_series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-
-    # MACD (12, 26, 9) hesaplama
-    df['EMA_12'] = close_series.ewm(span=12, adjust=False).mean()
-    df['EMA_26'] = close_series.ewm(span=26, adjust=False).mean()
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    # Kesişim için Hareketli Ortalamalar (5 ve 22 Günlük)
-    df['SMA_5'] = close_series.rolling(window=5).mean()
-    df['SMA_22'] = close_series.rolling(window=22).mean()
-    
-    # SuperTrend (10, 3) ve Hacim Ortalaması (10 Günlük)
-    # Hacmi güvenle alalım
-    if isinstance(df.columns, pd.MultiIndex):
-        volume_series = df['Volume'].iloc[:, 0]
-    else:
-        volume_series = df['Volume']
-        
-    df['Volume_SMA_10'] = volume_series.rolling(window=10).mean()
-    
-    # ATR Hesaplama
-    high = df['High'].iloc[:, 0] if isinstance(df.columns, pd.MultiIndex) else df['High']
-    low = df['Low'].iloc[:, 0] if isinstance(df.columns, pd.MultiIndex) else df['Low']
-    
-    tr1 = high - low
-    tr2 = (high - close_series.shift(1)).abs()
-    tr3 = (low - close_series.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(window=10).mean()
-    
-    # SuperTrend Bantları (Multiplier: 3)
-    hl2 = (high + low) / 2
-    df['Basic_Upper_Band'] = hl2 + (3 * df['ATR'])
-    df['Basic_Lower_Band'] = hl2 - (3 * df['ATR'])
-    
-    # SuperTrend sinyal çizgisi hesaplaması Pandas ile iterate edilmelidir
-    # Basitlik açısından tam döngü yerine yaklaşık bir SuperTrend sütunu simülesi:
-    supertrend = pd.Series(index=df.index, dtype=float)
-    direction = pd.Series(index=df.index, dtype=int)
-    
-    for i in range(1, len(df)):
-        if i == 1:
-            supertrend.iloc[i] = df['Basic_Upper_Band'].iloc[i]
-            direction.iloc[i] = 1
-            continue
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
             
-        if direction.iloc[i-1] == 1: # Trend Down
-            if close_series.iloc[i] > supertrend.iloc[i-1]:
-                direction.iloc[i] = -1 # Trend Up'a döndü
-                supertrend.iloc[i] = df['Basic_Lower_Band'].iloc[i]
-            else:
-                supertrend.iloc[i] = min(df['Basic_Upper_Band'].iloc[i], supertrend.iloc[i-1])
-                direction.iloc[i] = 1
-        else: # Trend Up (-1)
-            if close_series.iloc[i] < supertrend.iloc[i-1]:
-                direction.iloc[i] = 1 # Trend Down'a döndü
-                supertrend.iloc[i] = df['Basic_Upper_Band'].iloc[i]
-            else:
-                supertrend.iloc[i] = max(df['Basic_Lower_Band'].iloc[i], supertrend.iloc[i-1])
-                direction.iloc[i] = -1
-                
-    # Direction: -1 ise Boğa (Trend Yukarı), 1 ise Ayı (Trend Aşağı)
-    df['SuperTrend'] = supertrend
-    df['Trend_Dir'] = direction
+        # pandas_ta ile 10 strateji indikatör hesaplamaları
+        df.ta.rsi(length=14, append=True)
+        df.ta.macd(fast=12, slow=26, signal=9, append=True)
+        df.ta.bbands(length=20, std=2, append=True)
+        try:
+            df.ta.ichimoku(append=True)
+        except Exception:
+            pass
+        df.ta.adx(length=14, append=True)
+        df.ta.sma(length=5, append=True)
+        df.ta.sma(length=20, append=True)
+        df.ta.sma(length=22, append=True)
+        df.ta.sma(length=50, append=True)
+        df.ta.sma(length=200, append=True)
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True)
+        df.ta.stoch(k=14, d=3, smooth_k=3, append=True)
+        df.ta.cci(length=14, append=True)
+        df.ta.willr(length=14, append=True)
+        df.ta.supertrend(length=10, multiplier=3, append=True)
 
-    # 20 Günlük ve Diğer Hareketli Ortalamalar
-    
-    # --- YENİ TEKNİK İNDİKATÖRLER ---
-    low_14 = low.rolling(window=14).min()
-    high_14 = high.rolling(window=14).max()
-    df['Stoch_K'] = 100 * ((close_series - low_14) / (high_14 - low_14))
-    df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
-    
-    tenkan = (high.rolling(window=9).max() + low.rolling(window=9).min()) / 2
-    kijun = (high.rolling(window=26).max() + low.rolling(window=26).min()) / 2
-    df['Senkou_Span_A'] = ((tenkan + kijun) / 2).shift(26)
-    df['Senkou_Span_B'] = ((high.rolling(window=52).max() + low.rolling(window=52).min()) / 2).shift(26)
-    df['Tenkan_sen'] = tenkan
-    df['Kijun_sen'] = kijun
-    
-    plus_dm = high.diff()
-    minus_dm = -low.diff()
-    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
-    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
-    atr_14 = tr.rolling(window=14).sum()
-    plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(window=14).sum() / atr_14)
-    minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(window=14).sum() / atr_14)
-    dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
-    df['ADX'] = dx.rolling(window=14).mean()
-    
-    tp = (high + low + close_series) / 3
-    sma_tp = tp.rolling(window=14).mean()
-    mad = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean())
-    df['CCI'] = (tp - sma_tp) / (0.015 * mad)
-    
-    df['Williams_R'] = -100 * ((high_14 - close_series) / (high_14 - low_14))
-    
-    raw_money_flow = tp * volume_series
-    pos_flow = pd.Series(np.where(tp > tp.shift(1), raw_money_flow, 0.0), index=df.index)
-    neg_flow = pd.Series(np.where(tp < tp.shift(1), raw_money_flow, 0.0), index=df.index)
-    
-    # 0'a bölme hatasını önlemek için +1e-5 eklendi
-    mfr = pos_flow.rolling(window=14).sum() / (neg_flow.rolling(window=14).sum() + 1e-5)
-    df['MFI'] = 100 - (100 / (1 + mfr))
+        # Eski kodla tam uyumluluk (Arayüz ve grafiklerin çökmemesi için)
+        if 'RSI_14' in df.columns: df['RSI'] = df['RSI_14']
+        if 'MACD_12_26_9' in df.columns: df['MACD'] = df['MACD_12_26_9']
+        if 'MACDh_12_26_9' in df.columns: df['MACD_Hist'] = df['MACDh_12_26_9']
+        if 'MACDs_12_26_9' in df.columns: df['MACD_Signal'] = df['MACDs_12_26_9']
+        if 'BBU_20_2.0' in df.columns: df['Upper_Band'] = df['BBU_20_2.0']
+        if 'BBL_20_2.0' in df.columns: df['Lower_Band'] = df['BBL_20_2.0']
 
-    df['SMA_50'] = close_series.rolling(window=50).mean()
-    df['SMA_200'] = close_series.rolling(window=200).mean()
+        if 'ISA_9' in df.columns: df['Senkou_Span_A'] = df['ISA_9'] # Ichimoku Senkou Span A
+        if 'ISB_26' in df.columns: df['Senkou_Span_B'] = df['ISB_26']
+        if 'ITS_9' in df.columns: df['Tenkan_sen'] = df['ITS_9']
+        if 'IKS_26' in df.columns: df['Kijun_sen'] = df['IKS_26']
 
+        if 'ADX_14' in df.columns: df['ADX'] = df['ADX_14']
+        if 'STOCHk_14_3_3' in df.columns: df['Stoch_K'] = df['STOCHk_14_3_3']
+        if 'STOCHd_14_3_3' in df.columns: df['Stoch_D'] = df['STOCHd_14_3_3']
+        if 'CCI_14_0.015' in df.columns: df['CCI'] = df['CCI_14_0.015']
+        if 'WILLR_14' in df.columns: df['Williams_R'] = df['WILLR_14']
+        
+        if 'SUPERTd_10_3.0' in df.columns: df['Trend_Dir'] = df['SUPERTd_10_3.0'] # 1 (Bull), -1 (Bear)
+
+        df['Volume_SMA_10'] = df['Volume'].rolling(window=10).mean()
+    except Exception as e:
+        pass
     return df
 
 def backtest_rsi_macd_strategy(df, initial_balance=10000):
-    balance = initial_balance
-    shares = 0
-    total_trades = 0
-    successful_trades = 0
-    last_buy_price = 0
-    
-    for i in range(1, len(df)):
-        price = df['Close'].iloc[i]
-        rsi = df['RSI'].iloc[i]
-        macd = df['MACD'].iloc[i]
-        macd_signal = df['MACD_Signal'].iloc[i]
-        sma_200 = df['SMA_200'].iloc[i]
-        
-        if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal) or pd.isna(sma_200):
-            continue
-            
-        macd_buy_signal = macd > macd_signal
-        trend_is_up = price > sma_200
-        
-        # Sinyal Durumu: Al(1), Sat(-1), Bekle(0)
-        signal = 0
-        if trend_is_up and rsi < 40 and macd_buy_signal:
-            signal = 1
-        elif shares > 0 and (price <= last_buy_price * 0.93 or rsi > 70):
-            signal = -1
-            
-        if signal == 1 and shares == 0:
-            shares = balance / price
-            balance = 0
-            last_buy_price = price
-            total_trades += 1
-        elif signal == -1 and shares > 0:
-            balance += shares * price
-            if price > last_buy_price:
-                successful_trades += 1
-            shares = 0
-            total_trades += 1
+    try:
+        balance = initial_balance
+        shares = 0
+        total_trades = 0
+        successful_trades = 0
+        last_buy_price = 0
 
-    final_value = balance + (shares * df['Close'].iloc[-1])
-    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-        
-    return final_value, total_trades, win_rate
+        for i in range(1, len(df)):
+            price = df['Close'].iloc[i]
+            rsi = df['RSI'].iloc[i]
+            macd = df['MACD'].iloc[i]
+            macd_signal = df['MACD_Signal'].iloc[i]
+            sma_200 = df['SMA_200'].iloc[i]
+
+            if pd.isna(rsi) or pd.isna(macd) or pd.isna(macd_signal) or pd.isna(sma_200):
+                continue
+
+            macd_buy_signal = macd > macd_signal
+            trend_is_up = price > sma_200
+
+            # Sinyal Durumu: Al(1), Sat(-1), Bekle(0)
+            signal = 0
+            if trend_is_up and rsi < 40 and macd_buy_signal:
+                signal = 1
+            elif shares > 0 and (price <= last_buy_price * 0.93 or rsi > 70):
+                signal = -1
+
+            if signal == 1 and shares == 0:
+                shares = balance / price
+                balance = 0
+                last_buy_price = price
+                total_trades += 1
+            elif signal == -1 and shares > 0:
+                balance += shares * price
+                if price > last_buy_price:
+                    successful_trades += 1
+                shares = 0
+                total_trades += 1
+
+        final_value = balance + (shares * df['Close'].iloc[-1])
+        win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+
+        return final_value, total_trades, win_rate
+    except Exception:
+        return initial_balance, 0, 0.0
 
 def backtest_supertrend_strategy(df, initial_balance=10000):
-    if df.empty or len(df) < 2:
-        return initial_balance, 0, 0.0
-        
-    balance = initial_balance
-    shares = 0
-    total_trades = 0
-    successful_trades = 0
-    last_buy_price = 0
-    
-    for i in range(1, len(df)):
-        price = df['Close'].iloc[i]
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            vol = df['Volume'].iloc[i, 0]
-        else:
-            vol = df['Volume'].iloc[i]
-            
-        vol_sma_10 = df['Volume_SMA_10'].iloc[i]
-        trend_dir = df['Trend_Dir'].iloc[i]
-        prev_trend_dir = df['Trend_Dir'].iloc[i-1]
-        
-        if pd.isna(trend_dir) or pd.isna(vol_sma_10):
-            continue
-            
-        trend_just_turned_up = (prev_trend_dir == 1) and (trend_dir == -1)
-        trend_just_turned_down = (prev_trend_dir == -1) and (trend_dir == 1)
-        volume_confirm = vol > vol_sma_10
-        
-        signal = 0
-        if trend_just_turned_up and volume_confirm:
-            signal = 1
-        elif trend_just_turned_down or (shares > 0 and price <= last_buy_price * 0.93):
-            signal = -1
-            
-        if signal == 1 and shares == 0:
-            shares = balance / price
-            balance = 0
-            last_buy_price = price
-            total_trades += 1
-        elif signal == -1 and shares > 0:
-            balance += shares * price
-            if price > last_buy_price:
-                successful_trades += 1
-            shares = 0
-            total_trades += 1
+    try:
+        if df.empty or len(df) < 2:
+            return initial_balance, 0, 0.0
 
-    final_value = balance + (shares * df['Close'].iloc[-1])
-    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-        
-    return final_value, total_trades, win_rate
+        balance = initial_balance
+        shares = 0
+        total_trades = 0
+        successful_trades = 0
+        last_buy_price = 0
+
+        for i in range(1, len(df)):
+            price = df['Close'].iloc[i]
+
+            if isinstance(df.columns, pd.MultiIndex):
+                vol = df['Volume'].iloc[i, 0]
+            else:
+                vol = df['Volume'].iloc[i]
+
+            vol_sma_10 = df['Volume_SMA_10'].iloc[i]
+            trend_dir = df['Trend_Dir'].iloc[i]
+            prev_trend_dir = df['Trend_Dir'].iloc[i-1]
+
+            if pd.isna(trend_dir) or pd.isna(vol_sma_10):
+                continue
+
+            trend_just_turned_up = (prev_trend_dir == 1) and (trend_dir == -1)
+            trend_just_turned_down = (prev_trend_dir == -1) and (trend_dir == 1)
+            volume_confirm = vol > vol_sma_10
+
+            signal = 0
+            if trend_just_turned_up and volume_confirm:
+                signal = 1
+            elif trend_just_turned_down or (shares > 0 and price <= last_buy_price * 0.93):
+                signal = -1
+
+            if signal == 1 and shares == 0:
+                shares = balance / price
+                balance = 0
+                last_buy_price = price
+                total_trades += 1
+            elif signal == -1 and shares > 0:
+                balance += shares * price
+                if price > last_buy_price:
+                    successful_trades += 1
+                shares = 0
+                total_trades += 1
+
+        final_value = balance + (shares * df['Close'].iloc[-1])
+        win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+
+        return final_value, total_trades, win_rate
+    except Exception:
+        return initial_balance, 0, 0.0
 
 def backtest_ma_cross_strategy(df, initial_balance=10000):
-    if df.empty or len(df) < 2:
-        return initial_balance, 0, 0.0
-        
-    balance = initial_balance
-    shares = 0
-    total_trades = 0
-    successful_trades = 0
-    last_buy_price = 0
-    
-    for i in range(1, len(df)):
-        price = df['Close'].iloc[i]
-        sma_5 = df['SMA_5'].iloc[i]
-        sma_22 = df['SMA_22'].iloc[i]
-        prev_sma_5 = df['SMA_5'].iloc[i-1]
-        prev_sma_22 = df['SMA_22'].iloc[i-1]
-        
-        if pd.isna(sma_5) or pd.isna(sma_22) or pd.isna(prev_sma_5):
-            continue
-            
-        golden_cross = (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22)
-        death_cross = (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22)
-        
-        signal = 0
-        if golden_cross:
-            signal = 1
-        elif death_cross or (shares > 0 and price <= last_buy_price * 0.93):
-            signal = -1
-            
-        if signal == 1 and shares == 0:
-            shares = balance / price
-            balance = 0
-            last_buy_price = price
-            total_trades += 1
-        elif signal == -1 and shares > 0:
-            balance += shares * price
-            if price > last_buy_price:
-                successful_trades += 1
-            shares = 0
-            total_trades += 1
+    try:
+        if df.empty or len(df) < 2:
+            return initial_balance, 0, 0.0
 
-    final_value = balance + (shares * df['Close'].iloc[-1])
-    win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-        
-    return final_value, total_trades, win_rate
+        balance = initial_balance
+        shares = 0
+        total_trades = 0
+        successful_trades = 0
+        last_buy_price = 0
+
+        for i in range(1, len(df)):
+            price = df['Close'].iloc[i]
+            sma_5 = df['SMA_5'].iloc[i]
+            sma_22 = df['SMA_22'].iloc[i]
+            prev_sma_5 = df['SMA_5'].iloc[i-1]
+            prev_sma_22 = df['SMA_22'].iloc[i-1]
+
+            if pd.isna(sma_5) or pd.isna(sma_22) or pd.isna(prev_sma_5):
+                continue
+
+            golden_cross = (prev_sma_5 <= prev_sma_22) and (sma_5 > sma_22)
+            death_cross = (prev_sma_5 >= prev_sma_22) and (sma_5 < sma_22)
+
+            signal = 0
+            if golden_cross:
+                signal = 1
+            elif death_cross or (shares > 0 and price <= last_buy_price * 0.93):
+                signal = -1
+
+            if signal == 1 and shares == 0:
+                shares = balance / price
+                balance = 0
+                last_buy_price = price
+                total_trades += 1
+            elif signal == -1 and shares > 0:
+                balance += shares * price
+                if price > last_buy_price:
+                    successful_trades += 1
+                shares = 0
+                total_trades += 1
+
+        final_value = balance + (shares * df['Close'].iloc[-1])
+        win_rate = (successful_trades / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+
+        return final_value, total_trades, win_rate
+    except Exception:
+        return initial_balance, 0, 0.0
 
 
 def bt_simulator(df, signal_logic, initial_balance=10000):
-    if df.empty or len(df) < 50:
+    try:
+        if df.empty or len(df) < 50:
+            return initial_balance, 0, 0.0
+        balance, shares, total_trades, success = initial_balance, 0, 0, 0
+        last_buy = 0
+        for i in range(50, len(df)):
+            signal = signal_logic(df, i, shares, last_buy)
+            price = df['Close'].iloc[i]
+            if signal == 1 and shares == 0:
+                shares = balance / price
+                balance = 0
+                last_buy = price
+                total_trades += 1
+            elif signal == -1 and shares > 0:
+                balance += shares * price
+                if price > last_buy: success += 1
+                shares = 0
+                total_trades += 1
+        final_val = balance + (shares * df['Close'].iloc[-1])
+        win_rate = (success / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+        return final_val, total_trades, win_rate
+    except Exception:
         return initial_balance, 0, 0.0
-    balance, shares, total_trades, success = initial_balance, 0, 0, 0
-    last_buy = 0
-    for i in range(50, len(df)):
-        signal = signal_logic(df, i, shares, last_buy)
-        price = df['Close'].iloc[i]
-        if signal == 1 and shares == 0:
-            shares = balance / price
-            balance = 0
-            last_buy = price
-            total_trades += 1
-        elif signal == -1 and shares > 0:
-            balance += shares * price
-            if price > last_buy: success += 1
-            shares = 0
-            total_trades += 1
-    final_val = balance + (shares * df['Close'].iloc[-1])
-    win_rate = (success / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
-    return final_val, total_trades, win_rate
 
 def bt_bbands(df, init_bal=10000):
     def logic(d, i, shares, buy_p):
