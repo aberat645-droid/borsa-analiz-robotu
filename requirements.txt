@@ -1,7 +1,6 @@
-pandas_ta
+pandas-ta
 yfinance
-pandas<2.2.0
-numpy<2.0.0
+pandas
 plotly
 streamlit
-scipy
+numpy<2.0.0
