@@ -56,7 +56,7 @@ def apply_ta(df):
         return df
         
     try:
-        df.ta.rsi(length=7, append=True)
+        df.ta.rsi(length=3, append=True)
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
         df.ta.bbands(length=20, std=2, append=True)
         
@@ -68,16 +68,16 @@ def apply_ta(df):
         df.ta.adx(length=14, append=True)
         df.ta.sma(length=5, append=True)
         df.ta.sma(length=22, append=True)
-        df.ta.ema(length=9, append=True)
-        df.ta.ema(length=21, append=True)
+        df.ta.ema(length=3, append=True)
+        df.ta.ema(length=8, append=True)
         df.ta.stoch(k=14, d=3, smooth_k=3, append=True)
         df.ta.cci(length=14, append=True)
         df.ta.willr(length=14, append=True)
-        df.ta.supertrend(length=7, multiplier=2, append=True)
+        df.ta.supertrend(length=5, multiplier=1.5, append=True)
         
         # Sütun isimlerini arayüzde kolay kullanım için standartlaştıralım, varsa.
         ta_col_map = {
-            'RSI_7': 'RSI',
+            'RSI_3': 'RSI',
             'MACD_12_26_9': 'MACD',
             'MACDh_12_26_9': 'MACD_Hist',
             'MACDs_12_26_9': 'MACD_Signal',
@@ -91,15 +91,18 @@ def apply_ta(df):
             'WILLR_14': 'Williams_R',
             'SMA_5': 'SMA_5',
             'SMA_22': 'SMA_22',
-            'EMA_9': 'EMA_9',
-            'EMA_21': 'EMA_21',
-            'SUPERTd_7_2.0': 'Trend_Dir'
+            'EMA_3': 'EMA_3',
+            'EMA_8': 'EMA_8',
+            'SUPERTd_5_1.5': 'Trend_Dir'
         }
         
         for old_c, new_c in ta_col_map.items():
             if old_c in df.columns:
                 df[new_c] = df[old_c]
                 
+        # Hataları engelle: Dropna eklendi.
+        df.dropna(inplace=True)
+        
     except Exception as e:
         st.warning(f"İndikatörler hesaplanırken bir sorun oluştu: {e}")
         
@@ -107,16 +110,18 @@ def apply_ta(df):
 
 # ---------- STRATEJİ BACKTEST FONKSİYONLARI ----------
 def bt_simulator(df, signal_logic, initial_balance=10000):
-    if df.empty or len(df) < 50:
-        return initial_balance, 0, 0.0
+    if df.empty or len(df) < 20:
+        return initial_balance, 0, 0.0, "BEKLE", 0, "BEKLE", 0
         
     balance = initial_balance
     shares = 0
     total_trades = 0
     success = 0
     last_buy = 0
+    hold_days = []
+    buy_date_index = 0
     
-    for i in range(50, len(df)):
+    for i in range(20, len(df)):
         signal = signal_logic(df, i, shares, last_buy)
         price = df['Close'].iloc[i]
         
@@ -124,6 +129,7 @@ def bt_simulator(df, signal_logic, initial_balance=10000):
             shares = balance / price
             balance = 0
             last_buy = price
+            buy_date_index = i
             total_trades += 1
         elif signal == -1 and shares > 0:
             balance += shares * price
@@ -131,9 +137,11 @@ def bt_simulator(df, signal_logic, initial_balance=10000):
                 success += 1
             shares = 0
             total_trades += 1
+            hold_days.append(i - buy_date_index)
             
     final_val = balance + (shares * df['Close'].iloc[-1])
     win_rate = (success / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+    avg_hold = sum(hold_days) / len(hold_days) if hold_days else 0
     
     current_signal_code = signal_logic(df, len(df)-1, shares, last_buy)
     if current_signal_code == 1:
@@ -143,7 +151,7 @@ def bt_simulator(df, signal_logic, initial_balance=10000):
     else:
         sig_text = "BEKLE"
         
-    return final_val, total_trades, win_rate, sig_text
+    return final_val, total_trades, win_rate, sig_text, avg_hold
 
 def backtest_rsi(df):
     def logic(d, i, shares, buy_p):
@@ -233,10 +241,10 @@ def backtest_willr(df):
 def backtest_ema_cross(df):
     def logic(d, i, shares, buy_p):
         try:
-            e20 = d.get('EMA_9', pd.Series(dtype=float)).iloc[i]
-            e50 = d.get('EMA_21', pd.Series(dtype=float)).iloc[i]
-            pe20 = d.get('EMA_9', pd.Series(dtype=float)).iloc[i-1]
-            pe50 = d.get('EMA_21', pd.Series(dtype=float)).iloc[i-1]
+            e20 = d.get('EMA_3', pd.Series(dtype=float)).iloc[i]
+            e50 = d.get('EMA_8', pd.Series(dtype=float)).iloc[i]
+            pe20 = d.get('EMA_3', pd.Series(dtype=float)).iloc[i-1]
+            pe50 = d.get('EMA_8', pd.Series(dtype=float)).iloc[i-1]
             if pd.isna(e20) or pd.isna(e50): return 0
             if pe20 <= pe50 and e20 > e50: return 1
             if shares > 0 and (pe20 >= pe50 and e20 < e50 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
@@ -290,10 +298,10 @@ def run_all_strategies(df):
         "🎢 Stochastic Oscillator": backtest_stoch(df),
         "🎯 CCI (Emtia Kanalı)": backtest_cci(df),
         "📉 Williams %R": backtest_willr(df),
-        "⚡ EMA (9/21) Kesişimi": backtest_ema_cross(df),
+        "⚡ EMA (3/8) Kesişimi": backtest_ema_cross(df),
         "☁️ Ichimoku Bulutu": backtest_ichimoku(df),
         "🔥 ADX (Trend Gücü)": backtest_adx(df),
-        "🚀 SuperTrend (7/2)": backtest_supertrend(df)
+        "🚀 SuperTrend (5/1.5)": backtest_supertrend(df)
     }
     return strategies
 
@@ -319,8 +327,33 @@ else:
     best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
     current_signal = best_results[3]
     
+    # Consensus logic
+    rsi_sig = strategies["📉 RSI Dip Avcısı"][3]
+    ema_sig = strategies["⚡ EMA (3/8) Kesişimi"][3]
+    st_sig = strategies["🚀 SuperTrend (5/1.5)"][3]
+    
+    signals_list = [rsi_sig, ema_sig, st_sig]
+    buy_count = signals_list.count("AL")
+    sell_count = signals_list.count("SAT")
+    
+    if buy_count == 3:
+        consensus = "GÜÇLÜ AL"
+        color = "#00ff00"
+    elif buy_count > 0 and sell_count == 0:
+        consensus = "ZAYIF AL"
+        color = "#aaffaa"
+    elif sell_count == 3:
+        consensus = "GÜÇLÜ SAT"
+        color = "#ff0000"
+    elif sell_count > 0 and buy_count == 0:
+        consensus = "ZAYIF SAT"
+        color = "#ffaaaa"
+    else:
+        consensus = current_signal # Default best strategy fallback
+        color = '#ffff00' if consensus == 'BEKLE' else ('#00ff00' if consensus == 'AL' else '#ff0000')
+        
     st.markdown("---")
-    st.markdown(f"<h1 style='text-align: center; color: white;'>🎯 GÜNCEL SİNYAL: <span style='color: {'#00ff00' if current_signal == 'AL' else '#ff0000' if current_signal == 'SAT' else '#ffff00'};'>{current_signal}</span></h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='text-align: center; color: white;'>🎯 GÜNCEL DURUM: <span style='color: {color};'>{consensus}</span></h1>", unsafe_allow_html=True)
     st.markdown(f"<h4 style='text-align: center;'>🏆 Tavsiye Eden Şampiyon Taktik: {best_strategy_name}</h4>", unsafe_allow_html=True)
     st.markdown("---")
     
@@ -377,14 +410,15 @@ else:
     strat_names = list(strategies.keys())
     strat_choice = st.radio("Bir Strateji İnceleyin:", strat_names, index=strat_names.index(best_strategy_name))
     
-    val, trades, win, sig = strategies[strat_choice]
+    val, trades, win, sig, avg_hold = strategies[strat_choice]
     prof_pct = ((val - 10000) / 10000) * 100
     
-    c_lb1, c_lb2, c_lb3, c_lb4 = st.columns(4)
+    c_lb1, c_lb2, c_lb3, c_lb4, c_lb5 = st.columns(5)
     c_lb1.metric("Başlangıç", "10,000.00 ₺")
     c_lb2.metric("Sonuç", f"{val:,.2f} ₺", f"{prof_pct:.2f}%", delta_color="normal" if prof_pct >= 0 else "inverse")
     c_lb3.metric("İşlem Sayısı", f"{trades}")
     c_lb4.metric("Win Rate", f"%{win:.1f}")
+    c_lb5.metric("Ortalama Süre", f"{avg_hold:.1f} Gün")
     
     st.markdown("---")
     st.markdown("⚠️ Sorumluluk Reddi: Bu araç teknik göstergelere dayalıdır, yatırım tavsiyesi içermez.")
