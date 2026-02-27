@@ -4,12 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 
-# 1. Kütüphane Kontrolü
-try:
-    import pandas_ta as ta
-except ImportError:
-    st.error("Lütfen gerekli kütüphaneleri yükleyin: pip install -r requirements.txt")
-    st.stop()
+import pandas_ta as ta
 
 st.set_page_config(page_title="Canlı Borsa Analiz Aracı", page_icon="📈", layout="wide")
 
