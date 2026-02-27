@@ -51,7 +51,7 @@ def apply_ta(df):
         
     try:
         # Turbo Al-Sat Modu (Agresif) parametreleri
-        df.ta.rsi(length=7, append=True) # RSI 7
+        df.ta.rsi(length=3, append=True) # RSI 3
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
         df.ta.bbands(length=20, std=2, append=True)
         
@@ -74,7 +74,7 @@ def apply_ta(df):
         df.ta.supertrend(length=5, multiplier=1.1, append=True)
         
         ta_col_map = {
-            'RSI_7': 'RSI',
+            'RSI_3': 'RSI',
             'MACD_12_26_9': 'MACD',
             'MACDh_12_26_9': 'MACD_Hist',
             'MACDs_12_26_9': 'MACD_Signal',
@@ -353,7 +353,7 @@ else:
             color = "#ffff00"
             
         st.markdown("---")
-        st.markdown(f"<h1 style='text-align: center; color: white; border: 3px solid {color}; padding: 25px; border-radius: 12px; background-color: rgba(0,0,0,0.4); text-shadow: 2px 2px 4px #000000;'>🎯 GÜNCEL DURUM: <span style='color: {color}; font-weight: 900;'>{consensus}</span></h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: white; border: 3px solid {color}; padding: 25px; border-radius: 12px; background-color: rgba(0,0,0,0.4); text-shadow: 2px 2px 4px #000000;'>🎯 GÜNCEL TAVSİYE: <span style='color: {color}; font-weight: 900;'>{consensus}</span></h1>", unsafe_allow_html=True)
         st.markdown(f"<h4 style='text-align: center;'>🏆 Backtest Lideri Taktik: {best_strategy_name}</h4>", unsafe_allow_html=True)
         st.markdown("---")
         
@@ -371,7 +371,7 @@ else:
         
         c2.metric("Bollinger Alt (Destek)", f"{lb_val:.2f}" if pd.notna(lb_val) else "N/A")
         c3.metric("Bollinger Üst (Direnç)", f"{ub_val:.2f}" if pd.notna(ub_val) else "N/A")
-        c4.metric("RSI (7)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
+        c4.metric("RSI (3)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
         
         # ------------------ GRAFİKLER ------------------
         st.markdown(f"### 📈 Fiyat ve Sinyal Grafiği ({best_strategy_name} Noktalarıyla)")
