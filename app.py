@@ -37,8 +37,8 @@ with col2:
 @st.cache_data(ttl=60)
 def load_data(ticker):
     try:
-        # Hammaddeyi Artır (Kritik): 2y period, 1d interval
-        data = yf.download(ticker, period="2y", interval="1d")
+        # Hammadde Artırımı (Kritik): 5 yıllık geçmiş verisi (5y)
+        data = yf.download(ticker, period="5y", interval="1d")
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.droplevel(1)
         return data
@@ -51,7 +51,7 @@ def apply_ta(df):
         
     try:
         # Turbo Al-Sat Modu (Agresif) parametreleri
-        df.ta.rsi(length=3, append=True)
+        df.ta.rsi(length=7, append=True) # RSI 7
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
         df.ta.bbands(length=20, std=2, append=True)
         
@@ -63,15 +63,18 @@ def apply_ta(df):
         df.ta.adx(length=14, append=True)
         df.ta.sma(length=5, append=True)
         df.ta.sma(length=22, append=True)
+        
+        # EMA 3 ve 8 (Ana sinyal)
         df.ta.ema(length=3, append=True)
         df.ta.ema(length=8, append=True)
+        
         df.ta.stoch(k=14, d=3, smooth_k=3, append=True)
         df.ta.cci(length=14, append=True)
         df.ta.willr(length=14, append=True)
         df.ta.supertrend(length=5, multiplier=1.1, append=True)
         
         ta_col_map = {
-            'RSI_3': 'RSI',
+            'RSI_7': 'RSI',
             'MACD_12_26_9': 'MACD',
             'MACDh_12_26_9': 'MACD_Hist',
             'MACDs_12_26_9': 'MACD_Signal',
@@ -94,7 +97,7 @@ def apply_ta(df):
             if old_c in df.columns:
                 df[new_c] = df[old_c]
                 
-        # Hata Zırhı: NaN değerleri temizleyerek ileride TypeError/IndexError oluşmasını engelle
+        # Hata Zırhı: Eksik verileri temizleyip KeyError engelleme
         df.dropna(inplace=True)
         
     except Exception as e:
@@ -157,8 +160,8 @@ def backtest_rsi(df):
         try:
             rsi = d.get('RSI', pd.Series(dtype=float)).iloc[i]
             if pd.isna(rsi): return 0
-            if rsi < 30: return 1
-            if shares > 0 and (rsi > 70 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+            if rsi < 30: return 1  # 30 altı AL
+            if shares > 0 and (rsi > 70 or d['Close'].iloc[i] <= buy_p * 0.93): return -1 # 70 üstü SAT
         except: pass
         return 0
     return bt_simulator(df, logic)
@@ -310,15 +313,15 @@ def run_all_strategies(df):
 data_load_state = st.text("Veriler çekiliyor...")
 df_raw = load_data(ticker_symbol)
 
-# Hata Zırhı: NaN/Empty durumunda kilitlenmemesi için
+# Hata Zırhı: NaN/Empty durumunda asla devam etme
 if df_raw.empty:
-    st.warning("Hisse kodu hatalı veya veri gelmiyor.")
+    st.warning("Hisse Bulunamadı")
     data_load_state.text("Veri Bulunamadı.")
 else:
     df = apply_ta(df_raw.copy())
     
     if df.empty or len(df) < 50:
-         st.warning("Hisse kodu hatalı veya veri gelmiyor.")
+         st.warning("Hisse Bulunamadı")
          data_load_state.text("Veri Yetersiz.")
     else:
         data_load_state.text("Analiz Tamamlandı!")
@@ -336,44 +339,25 @@ else:
         buy_dates = best_results[5]
         sell_dates = best_results[6]
         
-        # Consensus logic (RSI, EMA, Supertrend)
-        rsi_sig = strategies["📉 RSI Dip Avcısı"][3]
+        # Ana Sinyal Olarak EMA (3/8) baz alınıyor, destekleyici olarak diğerleri
         ema_sig = strategies["⚡ EMA (3/8) Kesişimi"][3]
-        st_sig = strategies["🚀 SuperTrend (5/1.1)"][3]
         
-        signals_list = [rsi_sig, ema_sig, st_sig]
-        buy_count = signals_list.count("AL")
-        sell_count = signals_list.count("SAT")
-        
-        if buy_count == 3:
-            consensus = "GÜÇLÜ AL"
+        if ema_sig == "AL":
+            consensus = "AL"
             color = "#00ff00"
-        elif buy_count > 0 and sell_count == 0:
-            consensus = "ZAYIF AL"
-            color = "#aaffaa"
-        elif sell_count == 3:
-            consensus = "GÜÇLÜ SAT"
+        elif ema_sig == "SAT":
+            consensus = "SAT"
             color = "#ff0000"
-        elif sell_count > 0 and buy_count == 0:
-            consensus = "ZAYIF SAT"
-            color = "#ffaaaa"
         else:
-            if current_signal == "AL":
-                consensus = "AL"
-                color = "#00ff00"
-            elif current_signal == "SAT":
-                consensus = "SAT"
-                color = "#ff0000"
-            else:
-                consensus = "BEKLE"
-                color = "#ffff00"
+            consensus = "BEKLE"
+            color = "#ffff00"
             
         st.markdown("---")
-        st.markdown(f"<h1 style='text-align: center; color: white; border: 3px solid {color}; padding: 25px; border-radius: 12px; background-color: rgba(0,0,0,0.4); text-shadow: 2px 2px 4px #000000;'>🎯 GÜNCEL TAVSİYE: <span style='color: {color}; font-weight: 900;'>{consensus}</span></h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: white; border: 3px solid {color}; padding: 25px; border-radius: 12px; background-color: rgba(0,0,0,0.4); text-shadow: 2px 2px 4px #000000;'>🎯 GÜNCEL DURUM: <span style='color: {color}; font-weight: 900;'>{consensus}</span></h1>", unsafe_allow_html=True)
         st.markdown(f"<h4 style='text-align: center;'>🏆 Backtest Lideri Taktik: {best_strategy_name}</h4>", unsafe_allow_html=True)
         st.markdown("---")
         
-        st.success(f"Eğer 2 yıl önce **{best_strategy_name}** taktiği ile {display_symbol} hissesine 10.000 ₺ formülü uygulasaydınız, getiri oranınız **%{best_profit_pct:.2f}** ile sonucunuz **{best_results[0]:,.2f} ₺** olurdu.")
+        st.success(f"Eğer 5 yıl önce **{best_strategy_name}** taktiği ile {display_symbol} hissesine 10.000 ₺ formülü uygulasaydınız, getiri oranınız **%{best_profit_pct:.2f}** ile sonucunuz **{best_results[0]:,.2f} ₺** olurdu.")
         st.markdown("---")
         
         # Basit Metrikler
@@ -387,7 +371,7 @@ else:
         
         c2.metric("Bollinger Alt (Destek)", f"{lb_val:.2f}" if pd.notna(lb_val) else "N/A")
         c3.metric("Bollinger Üst (Direnç)", f"{ub_val:.2f}" if pd.notna(ub_val) else "N/A")
-        c4.metric("RSI (3)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
+        c4.metric("RSI (7)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
         
         # ------------------ GRAFİKLER ------------------
         st.markdown(f"### 📈 Fiyat ve Sinyal Grafiği ({best_strategy_name} Noktalarıyla)")
