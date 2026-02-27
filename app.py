@@ -4,8 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 
-# Denemek için pandas_ta importu, çalışmazsa diye try-except ile kontrol sağlanabilir ama
-# requirements.txt ile yüklendiği var sayılıyor.
 try:
     import pandas_ta as ta
 except ImportError:
@@ -13,9 +11,6 @@ except ImportError:
     st.stop()
 
 st.set_page_config(page_title="Canlı Borsa Analiz Aracı", page_icon="📈", layout="wide")
-
-st.title("📈 Akıllı Borsa Analiz Aracı")
-st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve size çeşitli indikatörlerle al-sat sinyallerini sunar.")
 
 # 1. Borsa ve Hisse Seçimi
 market_choice = st.radio("🌍 Borsa Seçimi:", ["Türkiye (BIST)", "Amerika (NASDAQ/NYSE)"], horizontal=True)
@@ -49,11 +44,8 @@ def load_data(ticker):
         return pd.DataFrame()
 
 def apply_ta(df):
-    """
-    pandas_ta kullanarak teknik analiz indikatörlerini hesaplar.
-    """
-    if df.empty or len(df) < 20:
-        return df
+    if df.empty or len(df) < 50:
+        return pd.DataFrame() # Not enough data
         
     try:
         df.ta.rsi(length=3, append=True)
@@ -73,9 +65,8 @@ def apply_ta(df):
         df.ta.stoch(k=14, d=3, smooth_k=3, append=True)
         df.ta.cci(length=14, append=True)
         df.ta.willr(length=14, append=True)
-        df.ta.supertrend(length=5, multiplier=1.5, append=True)
+        df.ta.supertrend(length=5, multiplier=1.2, append=True)
         
-        # Sütun isimlerini arayüzde kolay kullanım için standartlaştıralım, varsa.
         ta_col_map = {
             'RSI_3': 'RSI',
             'MACD_12_26_9': 'MACD',
@@ -93,25 +84,24 @@ def apply_ta(df):
             'SMA_22': 'SMA_22',
             'EMA_3': 'EMA_3',
             'EMA_8': 'EMA_8',
-            'SUPERTd_5_1.5': 'Trend_Dir'
+            'SUPERTd_5_1.2': 'Trend_Dir'
         }
         
         for old_c, new_c in ta_col_map.items():
             if old_c in df.columns:
                 df[new_c] = df[old_c]
                 
-        # Hataları engelle: Dropna eklendi.
         df.dropna(inplace=True)
         
     except Exception as e:
-        st.warning(f"İndikatörler hesaplanırken bir sorun oluştu: {e}")
+        pass
         
     return df
 
 # ---------- STRATEJİ BACKTEST FONKSİYONLARI ----------
 def bt_simulator(df, signal_logic, initial_balance=10000):
-    if df.empty or len(df) < 20:
-        return initial_balance, 0, 0.0, "BEKLE", 0, "BEKLE", 0
+    if df.empty or len(df) < 5:
+        return initial_balance, 0, 0.0, "BEKLE", 0
         
     balance = initial_balance
     shares = 0
@@ -121,7 +111,7 @@ def bt_simulator(df, signal_logic, initial_balance=10000):
     hold_days = []
     buy_date_index = 0
     
-    for i in range(20, len(df)):
+    for i in range(len(df)):
         signal = signal_logic(df, i, shares, last_buy)
         price = df['Close'].iloc[i]
         
@@ -156,7 +146,6 @@ def bt_simulator(df, signal_logic, initial_balance=10000):
 def backtest_rsi(df):
     def logic(d, i, shares, buy_p):
         try:
-            # Sütunları güvenli al
             rsi = d.get('RSI', pd.Series(dtype=float)).iloc[i]
             if pd.isna(rsi): return 0
             if rsi < 30: return 1
@@ -171,7 +160,7 @@ def backtest_macd(df):
             m = d.get('MACD', pd.Series(dtype=float)).iloc[i]
             s = d.get('MACD_Signal', pd.Series(dtype=float)).iloc[i]
             if pd.isna(m) or pd.isna(s): return 0
-            if m > s and m < 0: return 1 # Dipten kesişim
+            if m > s and m < 0: return 1
             if shares > 0 and (m < s or d['Close'].iloc[i] <= buy_p * 0.93): return -1
         except: pass
         return 0
@@ -192,6 +181,7 @@ def backtest_bbands(df):
 
 def backtest_sma_cross(df):
     def logic(d, i, shares, buy_p):
+        if i < 1: return 0
         try:
             s5 = d.get('SMA_5', pd.Series(dtype=float)).iloc[i]
             s22 = d.get('SMA_22', pd.Series(dtype=float)).iloc[i]
@@ -240,6 +230,7 @@ def backtest_willr(df):
 
 def backtest_ema_cross(df):
     def logic(d, i, shares, buy_p):
+        if i < 1: return 0
         try:
             e20 = d.get('EMA_3', pd.Series(dtype=float)).iloc[i]
             e50 = d.get('EMA_8', pd.Series(dtype=float)).iloc[i]
@@ -279,6 +270,7 @@ def backtest_adx(df):
 
 def backtest_supertrend(df):
     def logic(d, i, shares, buy_p):
+        if i < 1: return 0
         try:
             td = d.get('Trend_Dir', pd.Series(dtype=float)).iloc[i]
             ptd = d.get('Trend_Dir', pd.Series(dtype=float)).iloc[i-1]
@@ -301,7 +293,7 @@ def run_all_strategies(df):
         "⚡ EMA (3/8) Kesişimi": backtest_ema_cross(df),
         "☁️ Ichimoku Bulutu": backtest_ichimoku(df),
         "🔥 ADX (Trend Gücü)": backtest_adx(df),
-        "🚀 SuperTrend (5/1.5)": backtest_supertrend(df)
+        "🚀 SuperTrend (5/1.2)": backtest_supertrend(df)
     }
     return strategies
 
@@ -310,115 +302,126 @@ data_load_state = st.text("Veriler çekiliyor...")
 df_raw = load_data(ticker_symbol)
 
 if df_raw.empty:
-    data_load_state.text(f"'{ticker_symbol}' için veri bulunamadı. Kodu veya piyasayı kontrol edin.")
+    st.warning(f"'{ticker_symbol}' için veri bulunamadı! Kodu veya piyasayı kontrol edin.")
+    data_load_state.text("Veri Bulunamadı.")
 else:
-    data_load_state.text("Analiz Tamamlandı!")
-    
     df = apply_ta(df_raw.copy())
     
-    display_symbol = ticker_symbol.split('.')[0].upper()
-    current_price = df['Close'].iloc[-1]
-    
-    # Şampiyon Seçimi
-    strategies = run_all_strategies(df)
-    
-    best_strategy_name = max(strategies, key=lambda k: strategies[k][0])
-    best_results = strategies[best_strategy_name]
-    best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
-    current_signal = best_results[3]
-    
-    # Consensus logic
-    rsi_sig = strategies["📉 RSI Dip Avcısı"][3]
-    ema_sig = strategies["⚡ EMA (3/8) Kesişimi"][3]
-    st_sig = strategies["🚀 SuperTrend (5/1.5)"][3]
-    
-    signals_list = [rsi_sig, ema_sig, st_sig]
-    buy_count = signals_list.count("AL")
-    sell_count = signals_list.count("SAT")
-    
-    if buy_count == 3:
-        consensus = "GÜÇLÜ AL"
-        color = "#00ff00"
-    elif buy_count > 0 and sell_count == 0:
-        consensus = "ZAYIF AL"
-        color = "#aaffaa"
-    elif sell_count == 3:
-        consensus = "GÜÇLÜ SAT"
-        color = "#ff0000"
-    elif sell_count > 0 and buy_count == 0:
-        consensus = "ZAYIF SAT"
-        color = "#ffaaaa"
+    if df.empty:
+         st.warning(f"'{ticker_symbol}' için teknik analiz hesaplanacak kadar yeterli veri bulunamadı. Lütfen daha köklü bir hisse seçin.")
+         data_load_state.text("Yetersiz Veri.")
     else:
-        consensus = current_signal # Default best strategy fallback
-        color = '#ffff00' if consensus == 'BEKLE' else ('#00ff00' if consensus == 'AL' else '#ff0000')
+        data_load_state.text("Analiz Tamamlandı!")
         
-    st.markdown("---")
-    st.markdown(f"<h1 style='text-align: center; color: white;'>🎯 GÜNCEL DURUM: <span style='color: {color};'>{consensus}</span></h1>", unsafe_allow_html=True)
-    st.markdown(f"<h4 style='text-align: center;'>🏆 Tavsiye Eden Şampiyon Taktik: {best_strategy_name}</h4>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    st.success(f"Eğer 1 yıl önce bu taktikle {display_symbol} hissesine 10.000 ₺ bağlansaydınız, getiri oranınız **%{best_profit_pct:.2f}** ile sonucunuz **{best_results[0]:,.2f} ₺** olurdu.")
-    st.markdown("---")
-    
-    # Basit Metrikler
-    st.subheader(f"📊 {display_symbol} Güncel Fiyat ve Özet")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Güncel Fiyat", f"{current_price:.2f}")
-    
-    lb_val = df.get('Lower_Band', pd.Series([None])).iloc[-1]
-    ub_val = df.get('Upper_Band', pd.Series([None])).iloc[-1]
-    rsi_val = df.get('RSI', pd.Series([None])).iloc[-1]
-    
-    c2.metric("Bollinger Alt (Destek)", f"{lb_val:.2f}" if pd.notna(lb_val) else "N/A")
-    c3.metric("Bollinger Üst (Direnç)", f"{ub_val:.2f}" if pd.notna(ub_val) else "N/A")
-    c4.metric("RSI (14)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
-    
-    # ------------------ GRAFİKLER ------------------
-    st.markdown("### 📈 Fiyat ve Teknik Göstergeler")
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Kapanış Fiyatı', line=dict(color='blue')))
-    
-    if 'SMA_20' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], mode='lines', name='20 Günlük SMA', line=dict(color='orange')))
-    if 'Upper_Band' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['Upper_Band'], mode='lines', name='Bollinger Üst', line=dict(color='red', dash='dash')))
-    if 'Lower_Band' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['Lower_Band'], mode='lines', name='Bollinger Alt', line=dict(color='green', dash='dash')))
-
-    fig.update_layout(xaxis_title='Zaman', yaxis_title='Fiyat', template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Kıyaslama Modu
-    if ticker_symbol_2:
-        df_comp = load_data(ticker_symbol_2)
-        if not df_comp.empty:
-            st.markdown(f"### ⚔️ {display_symbol} vs {ticker_symbol_2.split('.')[0].upper()} (Yüzdesel Getiri)")
-            df1_pct = ((df['Close'] / df['Close'].iloc[0]) - 1) * 100
-            df2_pct = ((df_comp['Close'] / df_comp['Close'].iloc[0]) - 1) * 100
+        display_symbol = ticker_symbol.split('.')[0].upper()
+        current_price = df['Close'].iloc[-1]
+        
+        # Şampiyon Seçimi
+        strategies = run_all_strategies(df)
+        
+        best_strategy_name = max(strategies, key=lambda k: strategies[k][0])
+        best_results = strategies[best_strategy_name]
+        best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
+        current_signal = best_results[3]
+        
+        # Consensus logic
+        rsi_sig = strategies["📉 RSI Dip Avcısı"][3]
+        ema_sig = strategies["⚡ EMA (3/8) Kesişimi"][3]
+        st_sig = strategies["🚀 SuperTrend (5/1.2)"][3]
+        
+        signals_list = [rsi_sig, ema_sig, st_sig]
+        buy_count = signals_list.count("AL")
+        sell_count = signals_list.count("SAT")
+        
+        if buy_count == 3:
+            consensus = "GÜÇLÜ AL"
+            color = "#00ff00"
+        elif buy_count > 0 and sell_count == 0:
+            consensus = "ZAYIF AL"
+            color = "#aaffaa"
+        elif sell_count == 3:
+            consensus = "GÜÇLÜ SAT"
+            color = "#ff0000"
+        elif sell_count > 0 and buy_count == 0:
+            consensus = "ZAYIF SAT"
+            color = "#ffaaaa"
+        else:
+            if current_signal == "AL":
+                consensus = "AL (Şampiyon Taktik Puanı)"
+                color = "#00ff00"
+            elif current_signal == "SAT":
+                consensus = "SAT (Şampiyon Taktik Puanı)"
+                color = "#ff0000"
+            else:
+                consensus = "BEKLE"
+                color = "#ffff00"
             
-            fig_comp = go.Figure()
-            fig_comp.add_trace(go.Scatter(x=df.index, y=df1_pct, mode='lines', name=f"{display_symbol} Getiri", line=dict(color='#00ffcc', width=2)))
-            fig_comp.add_trace(go.Scatter(x=df_comp.index, y=df2_pct, mode='lines', name=f"{ticker_symbol_2.split('.')[0].upper()} Getiri", line=dict(color='#ff0066', width=2)))
-            fig_comp.update_layout(xaxis_title='Zaman', yaxis_title='Getiri (%)', template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
-            st.plotly_chart(fig_comp, use_container_width=True)
-    
-    # Ayrıntılı Laboratuvar
-    st.markdown("### 🤖 Backtest Laboratuvarı")
-    st.info("Kusursuz çalışan, çökme riski taşımayan stratejilerin sonuçları.")
-    
-    strat_names = list(strategies.keys())
-    strat_choice = st.radio("Bir Strateji İnceleyin:", strat_names, index=strat_names.index(best_strategy_name))
-    
-    val, trades, win, sig, avg_hold = strategies[strat_choice]
-    prof_pct = ((val - 10000) / 10000) * 100
-    
-    c_lb1, c_lb2, c_lb3, c_lb4, c_lb5 = st.columns(5)
-    c_lb1.metric("Başlangıç", "10,000.00 ₺")
-    c_lb2.metric("Sonuç", f"{val:,.2f} ₺", f"{prof_pct:.2f}%", delta_color="normal" if prof_pct >= 0 else "inverse")
-    c_lb3.metric("İşlem Sayısı", f"{trades}")
-    c_lb4.metric("Win Rate", f"%{win:.1f}")
-    c_lb5.metric("Ortalama Süre", f"{avg_hold:.1f} Gün")
-    
-    st.markdown("---")
-    st.markdown("⚠️ Sorumluluk Reddi: Bu araç teknik göstergelere dayalıdır, yatırım tavsiyesi içermez.")
+        st.markdown("---")
+        st.markdown(f"<h1 style='text-align: center; color: white;'>🎯 GÜNCEL TAVSİYE: <span style='color: {color};'>{consensus}</span></h1>", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        st.success(f"Eğer 1 yıl önce **{best_strategy_name}** ile {display_symbol} hissesine 10.000 ₺ bağlansaydınız, getiri oranınız **%{best_profit_pct:.2f}** ile sonucunuz **{best_results[0]:,.2f} ₺** olurdu.")
+        st.markdown("---")
+        
+        # Basit Metrikler
+        st.subheader(f"📊 {display_symbol} Güncel Fiyat ve Özet")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Güncel Fiyat", f"{current_price:.2f}")
+        
+        lb_val = df.get('Lower_Band', pd.Series([None])).iloc[-1]
+        ub_val = df.get('Upper_Band', pd.Series([None])).iloc[-1]
+        rsi_val = df.get('RSI', pd.Series([None])).iloc[-1]
+        
+        c2.metric("Bollinger Alt (Destek)", f"{lb_val:.2f}" if pd.notna(lb_val) else "N/A")
+        c3.metric("Bollinger Üst (Direnç)", f"{ub_val:.2f}" if pd.notna(ub_val) else "N/A")
+        c4.metric("RSI (Hızlı)", f"{rsi_val:.2f}" if pd.notna(rsi_val) else "N/A")
+        
+        # ------------------ GRAFİKLER ------------------
+        st.markdown("### 📈 Fiyat ve Teknik Göstergeler")
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Kapanış Fiyatı', line=dict(color='blue')))
+        
+        if 'EMA_8' in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_8'], mode='lines', name='8 Günlük EMA', line=dict(color='orange')))
+        if 'Upper_Band' in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df['Upper_Band'], mode='lines', name='Bollinger Üst', line=dict(color='red', dash='dash')))
+        if 'Lower_Band' in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df['Lower_Band'], mode='lines', name='Bollinger Alt', line=dict(color='green', dash='dash')))
+
+        fig.update_layout(xaxis_title='Zaman', yaxis_title='Fiyat', template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Kıyaslama Modu
+        if ticker_symbol_2:
+            df_comp = load_data(ticker_symbol_2)
+            if not df_comp.empty:
+                st.markdown(f"### ⚔️ {display_symbol} vs {ticker_symbol_2.split('.')[0].upper()} (Yüzdesel Getiri)")
+                df1_pct = ((df['Close'] / df['Close'].iloc[0]) - 1) * 100
+                df2_pct = ((df_comp['Close'] / df_comp['Close'].iloc[0]) - 1) * 100
+                
+                fig_comp = go.Figure()
+                fig_comp.add_trace(go.Scatter(x=df.index, y=df1_pct, mode='lines', name=f"{display_symbol} Getiri", line=dict(color='#00ffcc', width=2)))
+                fig_comp.add_trace(go.Scatter(x=df_comp.index, y=df2_pct, mode='lines', name=f"{ticker_symbol_2.split('.')[0].upper()} Getiri", line=dict(color='#ff0066', width=2)))
+                fig_comp.update_layout(xaxis_title='Zaman', yaxis_title='Getiri (%)', template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
+                st.plotly_chart(fig_comp, use_container_width=True)
+        
+        # Ayrıntılı Laboratuvar
+        st.markdown("### 🤖 Scalping Laboratuvarı")
+        st.info("Kusursuz çalışan, çökme riski taşımayan stratejilerin sonuçları.")
+        
+        strat_names = list(strategies.keys())
+        strat_choice = st.radio("Bir Strateji İnceleyin:", strat_names, index=strat_names.index(best_strategy_name))
+        
+        val, trades, win, sig, avg_hold = strategies[strat_choice]
+        prof_pct = ((val - 10000) / 10000) * 100
+        
+        c_lb1, c_lb2, c_lb3, c_lb4, c_lb5 = st.columns(5)
+        c_lb1.metric("Başlangıç", "10,000.00 ₺")
+        c_lb2.metric("Sonuç", f"{val:,.2f} ₺", f"{prof_pct:.2f}%", delta_color="normal" if prof_pct >= 0 else "inverse")
+        c_lb3.metric("İşlem Sayısı", f"{trades}")
+        c_lb4.metric("Win Rate", f"%{win:.1f}")
+        c_lb5.metric("Ortalama Süre", f"{avg_hold:.1f} Gün")
+        
+        st.markdown("---")
+        st.markdown("⚠️ Sorumluluk Reddi: Bu araç teknik göstergelere dayalıdır, yatırım tavsiyesi içermez.")
