@@ -375,18 +375,18 @@ else:
 
     latest_data = df.iloc[-1]
     current_price = latest_data['Close']
-    buy_price = latest_data['Lower_Band']
-    sell_price = latest_data['Upper_Band']
-    current_rsi = latest_data['RSI']
+    buy_price = latest_data.get('Lower_Band', current_price * 0.95)
+    sell_price = latest_data.get('Upper_Band', current_price * 1.05)
+    current_rsi = latest_data.get('RSI', 50.0)
 
-    current_macd = latest_data['MACD']
-    current_macd_signal = latest_data['MACD_Signal']
+    current_macd = latest_data.get('MACD', 0.0)
+    current_macd_signal = latest_data.get('MACD_Signal', 0.0)
 
     if len(df) > 1:
         previous_data = df.iloc[-2]
-        previous_rsi = previous_data['RSI']
-        previous_macd = previous_data['MACD']
-        previous_macd_signal = previous_data['MACD_Signal']
+        previous_rsi = previous_data.get('RSI', 50.0)
+        previous_macd = previous_data.get('MACD', 0.0)
+        previous_macd_signal = previous_data.get('MACD_Signal', 0.0)
     else:
         previous_rsi = current_rsi
         previous_macd = current_macd
@@ -606,19 +606,6 @@ else:
         st.plotly_chart(fig_macd, use_container_width=True)
     else:
         st.info("Bu hisse için yeterli MACD verisi hesaplanamadı.")
-    
-    fig_macd.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histogram', marker_color=colors))
-    fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='blue')))
-    fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], mode='lines', name='Sinyal', line=dict(color='orange')))
-    
-    fig_macd.update_layout(
-        xaxis_title='Zaman',
-        yaxis_title='MACD',
-        template="plotly_dark",
-        margin=dict(l=0, r=0, t=30, b=0),
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig_macd, use_container_width=True)
 
     # Haber Akışı
     st.markdown("---")
