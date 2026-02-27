@@ -3,35 +3,11 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
-import requests
+import pandas_ta as ta
 
 st.set_page_config(page_title="Canlı Borsa Analiz Aracı", page_icon="📈", layout="wide")
 
-def send_telegram_message(message):
-    try:
-        token = st.secrets.get("TELEGRAM_BOT_TOKEN", st.secrets.get("TELEGRAM_TOKEN", ""))
-        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {"chat_id": chat_id, "text": message}
-            response = requests.post(url, json=payload, timeout=5)
-            if response.status_code != 200:
-                st.warning(f"Telegram API Hatası: {response.text}")
-        else:
-            st.warning("Telegram Bot Token veya Chat ID bulunamadı. Lütfen secrets.toml dosyasını kontrol edin.")
-    except Exception as e:
-        st.warning(f"Telegram Bağlantı Hatası: {e}")
-
-if "bot_started" not in st.session_state:
-    st.session_state.bot_started = True
-    send_telegram_message("🤖 Borsa Robotun Göreve Hazır Ortak!")
-
 st.title("📈 Akıllı Borsa Analiz Aracı")
-
-# Telegram Test Butonu
-if st.button("📲 Telegram Bağlantısını Test Et"):
-    send_telegram_message("Sistem Aktif Ortak!")
-    st.success("Test mesajı gönderildi! Lütfen Telegram'ı kontrol edin.")
 
 st.markdown("Bu araç, seçtiğiniz hissenin son 1 yıllık grafiğini analiz eder ve Bollinger Bantları / Hareketli Ortalamalar (SMA) gibi teknik göstergeleri kullanarak size tahmini bir **Alım Fiyatı** ve **Kar Al (Satış) Fiyatı** sunar.")
 
@@ -159,6 +135,45 @@ def calculate_technical_indicators(df):
     df['Trend_Dir'] = direction
 
     # 20 Günlük ve Diğer Hareketli Ortalamalar
+    
+    # --- YENİ TEKNİK İNDİKATÖRLER ---
+    low_14 = low.rolling(window=14).min()
+    high_14 = high.rolling(window=14).max()
+    df['Stoch_K'] = 100 * ((close_series - low_14) / (high_14 - low_14))
+    df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
+    
+    tenkan = (high.rolling(window=9).max() + low.rolling(window=9).min()) / 2
+    kijun = (high.rolling(window=26).max() + low.rolling(window=26).min()) / 2
+    df['Senkou_Span_A'] = ((tenkan + kijun) / 2).shift(26)
+    df['Senkou_Span_B'] = ((high.rolling(window=52).max() + low.rolling(window=52).min()) / 2).shift(26)
+    df['Tenkan_sen'] = tenkan
+    df['Kijun_sen'] = kijun
+    
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
+    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
+    atr_14 = tr.rolling(window=14).sum()
+    plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(window=14).sum() / atr_14)
+    minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(window=14).sum() / atr_14)
+    dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
+    df['ADX'] = dx.rolling(window=14).mean()
+    
+    tp = (high + low + close_series) / 3
+    sma_tp = tp.rolling(window=14).mean()
+    mad = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean())
+    df['CCI'] = (tp - sma_tp) / (0.015 * mad)
+    
+    df['Williams_R'] = -100 * ((high_14 - close_series) / (high_14 - low_14))
+    
+    raw_money_flow = tp * volume_series
+    pos_flow = pd.Series(np.where(tp > tp.shift(1), raw_money_flow, 0.0), index=df.index)
+    neg_flow = pd.Series(np.where(tp < tp.shift(1), raw_money_flow, 0.0), index=df.index)
+    
+    # 0'a bölme hatasını önlemek için +1e-5 eklendi
+    mfr = pos_flow.rolling(window=14).sum() / (neg_flow.rolling(window=14).sum() + 1e-5)
+    df['MFI'] = 100 - (100 / (1 + mfr))
+
     df['SMA_50'] = close_series.rolling(window=50).mean()
     df['SMA_200'] = close_series.rolling(window=200).mean()
 
@@ -306,6 +321,84 @@ def backtest_ma_cross_strategy(df, initial_balance=10000):
         
     return final_value, total_trades, win_rate
 
+
+def bt_simulator(df, signal_logic, initial_balance=10000):
+    if df.empty or len(df) < 50:
+        return initial_balance, 0, 0.0
+    balance, shares, total_trades, success = initial_balance, 0, 0, 0
+    last_buy = 0
+    for i in range(50, len(df)):
+        signal = signal_logic(df, i, shares, last_buy)
+        price = df['Close'].iloc[i]
+        if signal == 1 and shares == 0:
+            shares = balance / price
+            balance = 0
+            last_buy = price
+            total_trades += 1
+        elif signal == -1 and shares > 0:
+            balance += shares * price
+            if price > last_buy: success += 1
+            shares = 0
+            total_trades += 1
+    final_val = balance + (shares * df['Close'].iloc[-1])
+    win_rate = (success / (total_trades // 2) * 100) if (total_trades // 2) > 0 else 0
+    return final_val, total_trades, win_rate
+
+def bt_bbands(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['Close'].iloc[i] < d['Lower_Band'].iloc[i]: return 1
+        if shares > 0 and (d['Close'].iloc[i] > d['Upper_Band'].iloc[i] or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_stoch(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['Stoch_K'].iloc[i] > d['Stoch_D'].iloc[i] and d['Stoch_K'].iloc[i] < 20: return 1
+        if shares > 0 and (d['Stoch_K'].iloc[i] < d['Stoch_D'].iloc[i] and d['Stoch_K'].iloc[i] > 80 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_ichimoku(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        price = d['Close'].iloc[i]
+        span_a = d['Senkou_Span_A'].iloc[i]
+        span_b = d['Senkou_Span_B'].iloc[i]
+        if pd.isna(span_a) or pd.isna(span_b): return 0
+        in_uptrend = price > max(span_a, span_b)
+        tenkan_above_kijun = d['Tenkan_sen'].iloc[i] > d['Kijun_sen'].iloc[i]
+        if in_uptrend and tenkan_above_kijun: return 1
+        if shares > 0 and (price < min(span_a, span_b) or price <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_adx(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['ADX'].iloc[i] > 25 and d['SMA_5'].iloc[i] > d['SMA_20'].iloc[i]: return 1
+        if shares > 0 and (d['ADX'].iloc[i] < 20 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_cci(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['CCI'].iloc[i] > 100: return 1
+        if shares > 0 and (d['CCI'].iloc[i] < -100 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_willr(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['Williams_R'].iloc[i] < -80 and d['Close'].iloc[i] > d['SMA_50'].iloc[i]: return 1
+        if shares > 0 and (d['Williams_R'].iloc[i] > -20 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
+def bt_mfi(df, init_bal=10000):
+    def logic(d, i, shares, buy_p):
+        if d['MFI'].iloc[i] < 20: return 1
+        if shares > 0 and (d['MFI'].iloc[i] > 80 or d['Close'].iloc[i] <= buy_p * 0.93): return -1
+        return 0
+    return bt_simulator(df, logic, init_bal)
+
 def get_current_signals(df):
     if df.empty or len(df) < 2:
         return {"🚀 SuperTrend & Hacim": "BEKLE", "⚔️ Hareketli Ortalama Kesişimi (5/22)": "BEKLE", "🛡️ RSI Dip Avcısı & MACD": "BEKLE"}
@@ -372,14 +465,18 @@ else:
     display_symbol = ticker_symbol.split('.')[0].upper()
 
     # --- OTOMATİK OPTİMİZASYON (HANGİ STRATEJİ DAHA İYİ?) ---
-    res_st = backtest_supertrend_strategy(df, 10000)
-    res_ma = backtest_ma_cross_strategy(df, 10000)
-    res_rsi = backtest_rsi_macd_strategy(df, 10000)
     
     strategies = {
-        "🚀 SuperTrend & Hacim": res_st,
-        "⚔️ Hareketli Ortalama Kesişimi (5/22)": res_ma,
-        "🛡️ RSI Dip Avcısı & MACD": res_rsi
+        "🚀 SuperTrend & Hacim": backtest_supertrend_strategy(df, 10000),
+        "⚔️ Hareketli Ortalama Kesişimi (5/22)": backtest_ma_cross_strategy(df, 10000),
+        "🛡️ RSI Dip Avcısı & MACD": backtest_rsi_macd_strategy(df, 10000),
+        "🎡 Bollinger Bantları": bt_bbands(df, 10000),
+        "🎢 Stochastic Oscillator": bt_stoch(df, 10000),
+        "☁️ Ichimoku Bulutu": bt_ichimoku(df, 10000),
+        "⚡ ADX (Trend Gücü)": bt_adx(df, 10000),
+        "🎯 CCI": bt_cci(df, 10000),
+        "📉 Williams %R": bt_willr(df, 10000),
+        "💰 MFI (Para Akışı Endeksi)": bt_mfi(df, 10000)
     }
     
     signals = get_current_signals(df)
@@ -389,67 +486,11 @@ else:
     best_profit_pct = ((best_results[0] - 10000) / 10000) * 100
     current_signal = signals.get(best_strategy_name, "BEKLE")
     
-    # Otomatik Telegram Sinyali Gönderimi (Session State ile spam önleme)
-    if current_signal in ["AL", "SAT"]:
-        signal_state_key = f"signal_sent_{display_symbol}"
-        if st.session_state.get(signal_state_key) != current_signal:
-            auto_msg = f"🚀 {display_symbol} Sinyali! En iyi çalışan {best_strategy_name} taktiğiyle şu an {current_signal} durumundayız. Fiyat: {float(current_price):.2f} TL"
-            send_telegram_message(auto_msg)
-            st.session_state[signal_state_key] = current_signal
-            
     # Şampiyon Strateji Kutusu
     st.markdown(f"## 🏆 {display_symbol} İçin En İyi Taktik: **{best_strategy_name}**")
     st.success(f"Bu hisseye 1 yıl önce en uygun taktikle 10.000₺ yatırsaydınız, **%{best_profit_pct:.2f} getiriyle** sermayeniz **{best_results[0]:,.2f}₺** olurdu.")
     
     st.markdown("---")
-    
-    # ------------------ TELEGRAM ENTEGRASYONU ------------------
-    st.markdown("### 📲 Akıllı Bildirimler (Telegram)")
-    st.info("Bu hisse için Şampiyon Stratejinin ürettiği güncel sinyali Telegram üzerinden cebinize gönderebilirsiniz.")
-    
-    # Secrets'tan bilgileri çekmeyi dene
-    default_token = ""
-    default_chat_id = ""
-    try:
-        if "TELEGRAM_BOT_TOKEN" in st.secrets and "TELEGRAM_CHAT_ID" in st.secrets:
-            default_token = st.secrets["TELEGRAM_BOT_TOKEN"]
-            default_chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-            st.success("✅ Telegram bağlantısı `secrets.toml` dosyası üzerinden başarıyla kuruldu! Tek tıkla sinyal gönderebilirsiniz.")
-    except Exception:
-        pass
-        
-    if not default_token or not default_chat_id:
-        col_tel1, col_tel2 = st.columns(2)
-        with col_tel1:
-            tg_bot_token = st.text_input("Bot Token", type="password", help="BotFather'dan aldığınız HTTP API Token")
-        with col_tel2:
-            tg_chat_id = st.text_input("Chat ID", help="Mesajın gönderileceği kişi veya grubun ID'si")
-    else:
-        tg_bot_token = default_token
-        tg_chat_id = default_chat_id
-        
-    if st.button("Sinyali Telegram'a Gönder 🚀"):
-        if not tg_bot_token or not tg_chat_id:
-            st.error("Lütfen Bot Token ve Chat ID alanlarını doldurunuz!")
-        else:
-            message = f"🤖 Borsa Analiz Robotu [{display_symbol}]\n"
-            message += f"🏆 En İyi Strateji: {best_strategy_name}\n"
-            message += f"📈 1 Yıllık Test Getirisi: %{best_profit_pct:.2f}\n"
-            message += f"🔔 Mevcut Durum: {current_signal}"
-            
-            url = f"https://api.telegram.org/bot{tg_bot_token}/sendMessage"
-            payload = {
-                "chat_id": tg_chat_id,
-                "text": message
-            }
-            try:
-                response = requests.post(url, json=payload)
-                if response.status_code == 200:
-                    st.success("Sinyal başarıyla Telegram'a gönderildi!")
-                else:
-                    st.warning(f"Telegram'a gönderilirken hata oluştu. Hata Kodu: {response.status_code}")
-            except Exception as e:
-                st.warning(f"Bağlantı hatası: {e}")
 
     # Özet Analiz Tablosunu Oluştur
     st.subheader(f"📊 {display_symbol} Güncel Fiyat Bilgileri")
@@ -575,11 +616,13 @@ else:
     final_val, trade_count, win_rate = strategies[strategy_choice]
     
     if "SuperTrend" in strategy_choice:
-        st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer. %7 Stop-Loss uygular. Özellikle KBORU, GESAN gibi hızlı hisselerde devasa kârlar üretir.")
+        st.markdown("**Strateji Mantığı:** SuperTrend (10, 3) Al sinyali ve Hacim Onayı ile işleme girer.")
     elif "Hareketli" in strategy_choice:
-        st.markdown("**Strateji Mantığı:** 5 günlük ve 22 günlük Hareketli Ortalamaların kesişimini (Golden Cross / Death Cross) takip eder.")
+        st.markdown("**Strateji Mantığı:** 5 günlük ve 22 günlük Hareketli Ortalamaların kesişimini takip eder.")
+    elif "RSI" in strategy_choice:
+        st.markdown("**Strateji Mantığı:** Aşırı satılan yerlerde (RSI < 40) MACD'nin al verdiği güvenli yerlerde mal toplar.")
     else:
-        st.markdown("**Strateji Mantığı:** 200 Günlük EMA'nın üzerinde, Trendi yukarı olan hissenin aşırı satıldığı (**RSI < 40**) ve MACD'nin al verdiği güvenli yerlerde mal toplar.")
+        st.markdown(f"**Strateji Mantığı:** {strategy_choice} stratejisi, ilgili indikatörlerin alım/satım kurallarına %7 stop-loss ile sadık kalır.")
     
     profit_loss = final_val - 10000
     profit_loss_pct = (profit_loss / 10000) * 100
